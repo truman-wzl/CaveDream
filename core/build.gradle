@@ -1,0 +1,14 @@
+// core：全部游戏逻辑（世界 / 战斗 / 法则 / 存档），可脱离窗口跑单元测试
+plugins {
+    id 'java-library'
+}
+
+dependencies {
+    api libs.gdx
+    implementation libs.jackson.databind
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation libs.junit.jupiter
+    testImplementation libs.assertj.core
+    testRuntimeOnly libs.junit.platform.launcher
+}

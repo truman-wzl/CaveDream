@@ -1,0 +1,15 @@
+// desktop：LWJGL3 启动器（窗口、渲染后端、程序入口）
+plugins {
+    id 'application'
+}
+
+dependencies {
+    implementation project(':core')
+    implementation libs.gdx.backend.lwjgl3
+    // 原生库按桌面平台分类器引入
+    runtimeOnly "com.badlogicgames.gdx:gdx-platform:${libs.versions.libgdx.get()}:natives-desktop"
+}
+
+application {
+    mainClass = 'com.cavedream.desktop.Main'
+}

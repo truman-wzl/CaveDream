@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: cavedream-server
+  config:
+    # 本地凭据在 application-local.yml（已 .gitignore，永不提交）；也可用环境变量 DB_USER/DB_PASSWORD 覆盖
+    import: optional:classpath:application-local.yml
+  datasource:
+    # 本机 MySQL8 跑在 3307 端口（DBeaver 同端口）；库 cavedream（utf8mb4 / utf8mb4_0900_ai_ci）
+    url: jdbc:mysql://localhost:3307/cavedream?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:cavedream}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always          # 启动时自动执行 schema.sql（幂等 IF NOT EXISTS）
+      schema-locations: classpath:schema.sql
+
+server:
+  # 8080 已被你的 forum-backend 占用，CaveDream 后端用 8081
+  port: ${SERVER_PORT:8081}

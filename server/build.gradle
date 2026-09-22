@@ -1,0 +1,20 @@
+// server：Spring Boot 后端（账号 / 云存档 / 同步日志），MySQL 仅对本服务可见
+// 开发运行：gradlew :server:run   （需本机 MySQL 已建 cavedream 库并配好 application.yml 账号密码）
+plugins {
+    id 'application'
+}
+
+dependencies {
+    implementation libs.spring.boot.starter.web
+    implementation libs.spring.boot.starter.jdbc
+    runtimeOnly libs.mysql.connector.j
+}
+
+application {
+    mainClass = 'com.cavedream.server.CaveDreamServerApplication'
+}
+
+// 不用 Spring Boot 插件时需手动加 -parameters，否则 @PathVariable/@RequestHeader 参数名反射失败
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}

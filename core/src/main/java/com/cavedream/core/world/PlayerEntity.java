@@ -1,0 +1,120 @@
+package com.cavedream.core.world;
+
+/**
+ * 玩家实体：纯逻辑 AABB  tile 碰撞（无渲染依赖，可单测）。
+ * 坐标 = 像素，(x,y) 为碰撞盒左下角，y 轴向上（与 {@link LayerWorld} 约定一致）。
+ */
+public final class PlayerEntity {
+
+    public static final int TILE = 16;
+
+    private static final float MOVE_SPEED = 170f;
+    private static final float JUMP_VELOCITY = 430f;
+    private static final float GRAVITY = 1400f;
+    private static final float MAX_FALL = 700f;
+    private static final float EPS = 0.01f;
+
+    private float x;
+    private float y;
+    /** 碰撞盒定稿（GDD §2.4/Q9，v0.17）：宽 1.3 格 × 高 2.6 格，1 格竖井不可穿过 */
+    private final float width = 1.3f * TILE;
+    private final float height = 2.6f * TILE;
+    private float vx;
+    private float vy;
+    private boolean onGround;
+
+    public PlayerEntity(float x, float y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    /**
+     * 推进一帧。
+     * @param dt  秒
+     * @param jump 本帧是否请求起跳（按住即自动跳，由调用方决定语义）
+     */
+    public void update(LayerWorld world, boolean left, boolean right, boolean jump, float dt) {
+        dt = Math.min(dt, 1f / 30f);   // 防卡顿大跳穿墙
+
+        vx = (right ? MOVE_SPEED : 0f) + (left ? -MOVE_SPEED : 0f);
+        if (jump && onGround) {
+            vy = JUMP_VELOCITY;
+            onGround = false;
+        }
+        vy = Math.max(vy - GRAVITY * dt, -MAX_FALL);
+
+        // X 轴移动 + 碰撞回弹
+        x += vx * dt;
+        if (overlapsSolid(world)) {
+            if (vx > 0) {
+                x = (float) Math.floor((x + width) / TILE) * TILE - width - EPS;
+            } else if (vx < 0) {
+                x = (float) (Math.floor(x / TILE) + 1) * TILE + EPS;
+            }
+            vx = 0;
+        }
+
+        // Y 轴移动 + 落地/顶头
+        y += vy * dt;
+        onGround = false;
+        if (overlapsSolid(world)) {
+            if (vy < 0) {
+                y = (float) (Math.floor(y / TILE) + 1) * TILE + EPS;
+                onGround = true;
+            } else if (vy > 0) {
+                y = (float) Math.floor((y + height) / TILE) * TILE - height - EPS;
+            }
+            vy = 0;
+        }
+    }
+
+    /** 碰撞盒覆盖的所有 tile 是否有实心。 */
+    public boolean overlapsSolid(LayerWorld world) {
+        int x0 = (int) Math.floor(x / TILE);
+        int x1 = (int) Math.floor((x + width) / TILE);
+        int y0 = (int) Math.floor(y / TILE);
+        int y1 = (int) Math.floor((y + height) / TILE);
+        for (int tx = x0; tx <= x1; tx++) {
+            for (int ty = y0; ty <= y1; ty++) {
+                if (world.isSolid(tx, ty)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 碰撞盒是否与某 tile 格重叠（放置方块防卡玩家用）。 */
+    public boolean overlapsTile(int tileX, int tileY) {
+        return x < (tileX + 1) * TILE && x + width > tileX * TILE
+                && y < (tileY + 1) * TILE && y + height > tileY * TILE;
+    }
+
+    public float x() {
+        return x;
+    }
+
+    public float y() {
+        return y;
+    }
+
+    public float width() {
+        return width;
+    }
+
+    public float height() {
+        return height;
+    }
+
+    public float centerX() {
+        return x + width / 2;
+    }
+
+    public float centerY() {
+        return y + height / 2;
+    }
+
+    public boolean isOnGround() {
+        return onGround;
+    }
+}
