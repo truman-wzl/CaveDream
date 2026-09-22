@@ -10,6 +10,7 @@ assertj = "3.26.3"
 [libraries]
 # 游戏框架（core 模块）
 gdx = { module = "com.badlogicgames.gdx:gdx", version.ref = "libgdx" }
+gdx-freetype = { module = "com.badlogicgames.gdx:gdx-freetype", version.ref = "libgdx" }
 # 桌面启动后端（desktop 模块）
 gdx-backend-lwjgl3 = { module = "com.badlogicgames.gdx:gdx-backend-lwjgl3", version.ref = "libgdx" }
 gdx-platform = { module = "com.badlogicgames.gdx:gdx-platform", version.ref = "libgdx" }
@@ -18,6 +19,7 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 # 后端（server 模块）
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "springBoot" }
 spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version.ref = "springBoot" }
+spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail", version.ref = "springBoot" }
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql" }
 # 测试
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }

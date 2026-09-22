@@ -46,8 +46,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
         batch = new SpriteBatch();
         camera = new OrthographicCamera();
-        font = new BitmapFont();
-        font.getData().setScale(1.3f);
+        font = CjkFonts.create(20);
 
         Pixmap pm = new Pixmap(1, 1, Pixmap.Format.RGB888);
         pm.setColor(1, 1, 1, 1);
@@ -190,9 +189,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.begin();
         font.setColor(0.85f, 0.88f, 1f, 1f);
         font.draw(batch,
-                "L1 Shallow Dream  |  fps " + Gdx.graphics.getFramesPerSecond()
-                        + "  |  hold: " + holdBlock.name()
-                        + "  |  A/D move  W jump  LMB dig  RMB place  ESC menu",
+                "L1 浅梦 · 帧率 " + Gdx.graphics.getFramesPerSecond()
+                        + " · 手持：" + holdBlock.cn()
+                        + " · A/D 移动  W 跳跃  左键挖掘  右键放置  ESC 返回标题",
                 camera.position.x - camera.viewportWidth / 2 + 12,
                 camera.position.y + camera.viewportHeight / 2 - 16);
         font.setColor(1, 1, 1, 1);

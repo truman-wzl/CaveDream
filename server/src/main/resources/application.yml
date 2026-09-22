@@ -10,11 +10,26 @@ spring:
     username: ${DB_USER:cavedream}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  mail:
+    # QQ 邮箱 SMTP；账号与授权码在 application-local.yml（授权码勿入 git）
+    host: smtp.qq.com
+    port: 465
+    properties:
+      mail.smtp.ssl.enable: true
+      mail.smtp.auth: true
+      mail.smtp.connectiontimeout: 8000
+      mail.smtp.timeout: 10000
   sql:
     init:
       mode: always          # 启动时自动执行 schema.sql（幂等 IF NOT EXISTS）
+      continue-on-error: true   # 容忍重复列的 ALTER 迁移语句（仅对 schema 脚本生效）
       schema-locations: classpath:schema.sql
 
 server:
   # 8080 已被你的 forum-backend 占用，CaveDream 后端用 8081
   port: ${SERVER_PORT:8081}
+
+app:
+  auth:
+    # 开发主码：授权码配好前用验证码 888888 走通全流程；上线前必须改 false
+    dev-master-code: true

@@ -8,8 +8,24 @@ dependencies {
     implementation libs.gdx.backend.lwjgl3
     // 原生库按桌面平台分类器引入
     runtimeOnly "com.badlogicgames.gdx:gdx-platform:${libs.versions.libgdx.get()}:natives-desktop"
+    runtimeOnly "com.badlogicgames.gdx:gdx-freetype-platform:${libs.versions.libgdx.get()}:natives-desktop"
 }
 
 application {
     mainClass = 'com.cavedream.desktop.Main'
+}
+
+// 可执行 fat jar：合并所有依赖（含 natives 里的 dll），供 jpackage 打包 梦迹行者.exe 使用
+tasks.register('fatJar', Jar) {
+    group = 'distribution'
+    archiveBaseName = 'cavedream'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // 显式声明对依赖产物（core jar / natives）的任务依赖，否则 clean 后 zipTree 找不到 jar、增量判定也会失真
+    dependsOn configurations.runtimeClasspath
+    manifest { attributes 'Main-Class': 'com.cavedream.desktop.Main' }
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/LICENSE*', 'META-INF/NOTICE*'
 }

@@ -4,8 +4,12 @@
 CREATE TABLE IF NOT EXISTS t_account (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
     username      VARCHAR(32)  NOT NULL COMMENT '登录名',
+    email         VARCHAR(64)  NULL COMMENT '邮箱（验证码注册/找回；也可作登录账号）',
+    UNIQUE KEY uk_email (email),
     password_hash VARCHAR(128) NOT NULL COMMENT '盐+SHA-256 迭代散列（原型级，上线换 BCrypt）',
     salt          VARCHAR(32)  NOT NULL,
+    sec_question  VARCHAR(128) NOT NULL DEFAULT '' COMMENT '密保问题（找回密码用）',
+    sec_answer    VARCHAR(128) NOT NULL DEFAULT '' COMMENT '密保答案散列（小写去空格后同法散列）',
     nickname      VARCHAR(32)  NOT NULL COMMENT '游戏内昵称（可中文）',
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login_at DATETIME     NULL,
@@ -37,3 +41,9 @@ CREATE TABLE IF NOT EXISTS t_cloud_sync_log (
     PRIMARY KEY (id),
     KEY idx_account_time (account_id, synced_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '同步流水（排查与统计用）';
+
+-- 存量库自动迁移：旧表补密保列（重复执行报 1060 重复列，由 continue-on-error 忽略）
+ALTER TABLE t_account ADD COLUMN sec_question VARCHAR(128) NOT NULL DEFAULT '' AFTER salt;
+ALTER TABLE t_account ADD COLUMN sec_answer   VARCHAR(128) NOT NULL DEFAULT '' AFTER sec_question;
+ALTER TABLE t_account ADD COLUMN email VARCHAR(64) NULL AFTER username;
+ALTER TABLE t_account ADD UNIQUE KEY uk_email (email);
