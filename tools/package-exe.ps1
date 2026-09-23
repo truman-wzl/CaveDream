@@ -28,6 +28,8 @@ if ($LASTEXITCODE -ne 0) { throw 'jlink failed' }
 Write-Host '==> 3/4 jpackage app-image'
 $appPath = Join-Path $distDir $appName
 if (Test-Path $appPath) { Remove-Item $appPath -Recurse -Force }
+# No --icon: jpackage's ResourceEditor step (writing icon/version into the exe) can fail with
+# system error 110 under AV/file-lock, corrupting the launcher (Failed to launch JVM). Re-add icon later when clean.
 & "$jdk\bin\jpackage.exe" `
     --type app-image `
     --name $appName `
@@ -35,30 +37,39 @@ if (Test-Path $appPath) { Remove-Item $appPath -Recurse -Force }
     --main-jar 'cavedream-1.0-SNAPSHOT.jar' `
     --main-class 'com.cavedream.desktop.Main' `
     --runtime-image $runtimeDir `
-    --icon "$root\desktop\pkg\cavedream.ico" `
     --dest $distDir `
     --java-options '-Xmx1g' `
     --java-options '-Dfile.encoding=UTF-8'
 if ($LASTEXITCODE -ne 0) { throw 'jpackage failed' }
 
-Write-Host '==> 4/4 verify runtime bundled + launch test'
+Write-Host '==> 4/4 emit bat launcher + verify via bundled JRE'
 $javaOk = Test-Path (Join-Path $appPath 'runtime\bin\java.exe')
 Write-Host ('runtime\bin\java.exe exists: ' + $javaOk)
 if (-not $javaOk) { throw 'runtime missing in app-image' }
 
+# Reliable launcher: bundled javaw (the jpackage .exe may be blocked by AV on some machines)
+$bat = Join-Path $appPath 'start-game.bat'
+$batLines = @(
+    '@echo off',
+    'rem CaveDream launcher - bundled JRE, avoids jpackage exe being blocked by AV',
+    'cd /d "%~dp0"',
+    'start "" "runtime\bin\javaw.exe" -Xmx1g -Dfile.encoding=UTF-8 -cp "app\cavedream-1.0-SNAPSHOT.jar" com.cavedream.desktop.Main'
+)
+[System.IO.File]::WriteAllLines($bat, $batLines, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host ('wrote launcher: ' + $bat)
+
 $exePath = Join-Path $appPath ($appName + '.exe')
-$proc = Start-Process -FilePath $exePath -PassThru
-Start-Sleep -Seconds 15
-$children = Get-Process | Where-Object { $_.ProcessName -notmatch '^csrss|^svchost' -and $_.Path -and $_.Path.StartsWith($appPath) } | Measure-Object
-if (-not $proc.HasExited -or $children.Count -gt 0) {
-    Write-Host ('LAUNCH OK (launcher pid=' + $proc.Id + ', app processes=' + $children.Count + ')')
-    Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($appPath) } | Stop-Process -Force -ErrorAction SilentlyContinue
-    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-} elseif ($proc.ExitCode -eq 0) {
-    Write-Host 'launcher exited 0 (hand-off) - treat as OK'  # jpackage launcher may detach
+Start-Process -FilePath $bat -WorkingDirectory $appPath | Out-Null
+Start-Sleep -Seconds 14
+$games = Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'javaw?\.exe' -and $_.CommandLine -match 'cavedream.desktop.Main' }
+if ($games) {
+    Write-Host ('LAUNCH OK via start-game.bat - game JVM running, count=' + ($games | Measure-Object).Count)
 } else {
-    Write-Host ('exe exited early with code ' + $proc.ExitCode)
-    throw 'exe failed to launch'
+    Write-Host 'FAILED - no game JVM even via bat'
 }
+$games | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-Process | Where-Object { try { $_.Path -and $_.Path.StartsWith($appPath) } catch { $false } } | Stop-Process -Force -ErrorAction SilentlyContinue
+if (-not $games) { throw 'launcher failed' }
 Write-Host '==> DONE'
+Write-Host ('double-click to play: ' + $bat)
 Get-Item $exePath | Select-Object FullName, Length

@@ -28,6 +28,15 @@ class LightEngineTest {
     }
 
     @Test
+    void outOfBoundsIsSafe() {
+        LightEngine e = new LightEngine();
+        e.recompute(ground());
+        assertThat(e.skyAt(-1, 0)).isZero();
+        assertThat(e.skyAt(0, 9999)).isZero();
+        assertThat(e.blockAt(9999, 9999)).isZero();
+    }
+
+    @Test
     void deepSealedInteriorIsDark() {
         LightEngine e = new LightEngine();
         e.recompute(ground());

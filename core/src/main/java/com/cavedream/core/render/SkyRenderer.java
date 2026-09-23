@@ -126,7 +126,7 @@ public final class SkyRenderer implements Disposable {
             int g = (int) (((top >> 8 & 0xFF) * (1 - t) + (bot >> 8 & 0xFF) * t));
             int bl = (int) (((top & 0xFF) * (1 - t) + (bot & 0xFF) * t));
             pm.setColor(r / 255f, g / 255f, bl / 255f, 1f);
-            pm.drawLine(0, y, gradW, y);
+            pm.drawLine(0, y, gradW - 1, y);
         }
         if (gradient != null) {
             gradient.dispose();

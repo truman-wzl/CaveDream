@@ -17,11 +17,16 @@ import com.cavedream.core.CaveDreamGame;
 import com.cavedream.core.light.GameClock;
 import com.cavedream.core.light.LightEngine;
 import com.cavedream.core.light.LightSource;
+import com.cavedream.core.light.SunShadow;
 import com.cavedream.core.render.BlockTextures;
 import com.cavedream.core.render.ItemCatalog;
 import com.cavedream.core.render.SkyRenderer;
 import com.cavedream.core.inventory.Inventory;
 import com.cavedream.core.item.Item;
+import com.cavedream.core.player.PlayerClass;
+import com.cavedream.core.player.PlayerStats;
+import com.cavedream.core.render.UiIcons;
+import com.cavedream.core.render.WoodUi;
 import com.cavedream.core.world.BlockType;
 import com.cavedream.core.world.ItemDrop;
 import com.cavedream.core.world.LayerWorld;
@@ -51,8 +56,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     }
     private static final int PLAYER_GLOW_LEVEL = 12;    // 角色自带微光峰值亮度 0~15
     private static final float PLAYER_GLOW_RADIUS = 6.5f;   // 角色微光半径（格）
+    private static final int SUN_SHADOW_DIST = 14;      // 太阳投影射线最大步数（格）
 
     private final CaveDreamGame game;
+    private final PlayerClass playerClass;
+    private final PlayerStats stats;
+    private UiIcons uiIcons;
     private final LayerWorld world;
     private final PlayerEntity player;
     private SpriteBatch batch;
@@ -80,6 +89,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final java.util.List<LightSource> dynamicLights = new java.util.ArrayList<>();
     private boolean lightDirty;
     private int daylight0to15 = LightEngine.MAX_LEVEL;   // 当前天光强度
+    private float sunX, sunY = 1f;                        // 指向太阳的单位向量
 
     // —— 背包 / 挖掘 / 动画 ——
     private static final int HOTBAR = 10;                // 快捷栏格数（GDD §3.5）
@@ -93,8 +103,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final java.util.List<ItemDrop> drops = new java.util.ArrayList<>();
     private final java.util.List<PickupFx> pickupFx = new java.util.ArrayList<>();
 
-    public PlayScreen(CaveDreamGame game) {
+    public PlayScreen(CaveDreamGame game, PlayerClass playerClass) {
         this.game = game;
+        this.playerClass = playerClass;
+        this.stats = new PlayerStats(playerClass);
         // 物品渲染验收阶段：用手工测试床（不依赖 WorldGenerator），一屏展示所有材料
         TestBed bed = TestBed.build();
         world = bed.world();
@@ -112,9 +124,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch = new SpriteBatch();
         camera = new OrthographicCamera();
         font = CjkFonts.create(15);   // HUD 参数字体缩小（开发者信息保留但不占屏）
-        for (Item it : Item.STARTER_KIT) {        // 起始三件套：木镐+木斧+职业主武器
-            inventory.add(it, 1);
-        }
+        inventory.add(Item.WOOD_PICKAXE, 1);        // 工具：木镐
+        inventory.add(Item.WOOD_AXE, 1);            // 工具：木斧
+        inventory.add(playerClass.weapon(), 1);     // 职业主武器（按所选职业）
         inventory.add(Item.ofBlock(BlockType.DIRT), 30);   // 起始方块便于验证放置
 
         Pixmap pm = new Pixmap(1, 1, Pixmap.Format.RGB888);
@@ -123,6 +135,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         pixel = new Texture(pm);
         pm.dispose();
         textures = new BlockTextures();
+        uiIcons = new UiIcons();
         sky = new SkyRenderer();
         dreamerRegion = new TextureRegion(textures.dreamer());
         pickaxeRegion = new TextureRegion(textures.pickaxe());
@@ -173,12 +186,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         // —— 光照推进：昼夜、世界改动重算、动态光源（角色 + 装备/武器特效光晕）——
         clock.update(delta);
         daylight0to15 = clock.daylightLevel0to15();
+        float[] sd = clock.sunDirection();
+        sunX = sd[0];
+        sunY = sd[1];
         if (lightDirty) {
             lightEngine.recompute(world);
             lightDirty = false;
         }
         rebuildDynamicLights();
         updateDrops(delta);
+        stats.update(delta);
 
         float d = daylight0to15 / (float) LightEngine.MAX_LEVEL;   // 昼系 0~1
         Gdx.gl.glClearColor(0.043f + 0.32f * d, 0.055f + 0.42f * d, 0.10f + 0.55f * d, 1f);   // 梦夜↔白昼底色
@@ -204,6 +221,34 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.end();
         drawHud();
         drawHotbar();
+        drawStats();
+    }
+
+    /** 双条 HUD（屏幕左上）：梦眠=月相图标、魔能=蓝五星；图标透明度=该格填充度（缺=透明、满=实心）。 */
+    private void drawStats() {
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        float x = 16f, top = uiCam.viewportHeight - 16f;
+        int moons = (int) Math.ceil(stats.maxLucidity() / 10f);
+        drawPips(uiIcons.moon(), x, top, moons, stats.lucidity() / 10f);
+        int stars = (int) Math.ceil(stats.maxMana() / 10f);
+        drawPips(uiIcons.star(), x, top - 30f, stars, stats.mana() / 10f);
+        font.setColor(0.9f, 0.92f, 1f, 1f);
+        font.draw(batch, stats.lucidity() + "/" + stats.maxLucidity(), x + moons * 26f + 8, top - 6);
+        font.draw(batch, stats.mana() + "/" + stats.maxMana(), x + stars * 26f + 8, top - 36);
+        font.setColor(1, 1, 1, 1);
+        batch.end();
+    }
+
+    /** 一排图标，第 i 个的 alpha = 该格已填充比例（实现“由浅变深/缺则透明”）。 */
+    private void drawPips(Texture tex, float x, float y, int count, float value) {
+        float size = 22f, step = 26f;
+        for (int i = 0; i < count; i++) {
+            float fillAmt = Math.max(0f, Math.min(1f, value - i));   // 第 i 格填充 0~1
+            batch.setColor(1, 1, 1, 0.22f + 0.78f * fillAmt);        // 空=淡、满=实
+            batch.draw(tex, x + i * step, y - size, size, size);
+        }
+        batch.setColor(1, 1, 1, 1);
     }
 
     /** 每帧收集动态光源：角色自身微光（保证可玩）+ 未来套装/饰品/时装/武器特效光晕都往这加。 */
@@ -498,8 +543,14 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         int x1 = (int) Math.ceil((camera.position.x + halfW) / TILE);
         int y0 = (int) Math.floor((camera.position.y - halfH) / TILE);
         int y1 = (int) Math.ceil((camera.position.y + halfH) / TILE);
+        x0 = Math.max(0, x0); x1 = Math.min(world.getWidth() - 1, x1);
+        y0 = Math.max(0, y0); y1 = Math.min(world.getHeight() - 1, y1);
         for (int x = x0; x <= x1; x++) {
             for (int y = y0; y <= y1; y++) {
+                // 开阔天空（空气且天光满格）不叠世界暗纱→太阳/天空由 SkyRenderer 干净呈现，不被“阴影”盖住。
+                if (world.blockAt(x, y) == BlockType.AIR && lightEngine.skyAt(x, y) >= LightEngine.MAX_LEVEL) {
+                    continue;
+                }
                 float dark = darknessAt(x, y);
                 if (dark > 0.004f) {
                     fill(x * (float) TILE, y * (float) TILE, TILE, TILE, 0.02f, 0.03f, 0.07f, dark);
@@ -515,9 +566,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return a > 0.98f ? 0.98f : a;   // 最暗近乎全黑但留一丝轮廓
     }
 
-    /** 该格合成亮度 0~15（对外 1~16 级 = +1）。 */
+    /** 该格合成亮度 0~15（对外 1~16 级 = +1）：天光经太阳方向投影，块光/角色光不受太阳遮挡。 */
     private int lightLevelAt(int x, int y) {
-        int lvl = lightEngine.staticLevel(x, y, daylight0to15);
+        int skyGeo = lightEngine.skyAt(x, y);
+        float sunVis = daylight0to15 > 0
+                ? SunShadow.visibility(world, x, y, sunX, sunY, SUN_SHADOW_DIST) : 1f;
+        int skyLight = Math.round(skyGeo / (float) LightEngine.MAX_LEVEL * daylight0to15 * sunVis);
+        int lvl = Math.max(skyLight, lightEngine.blockAt(x, y));
         for (int i = 0, n = dynamicLights.size(); i < n; i++) {
             int c = dynamicLights.get(i).at(x, y);
             if (c > lvl) {
@@ -718,6 +773,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         font.dispose();
         pixel.dispose();
         textures.dispose();
+        uiIcons.dispose();
         sky.dispose();
     }
 }

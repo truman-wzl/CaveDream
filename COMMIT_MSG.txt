@@ -1,0 +1,13 @@
+feat: v0.43 splash intro, directional sun shadows, class select + HP/MP bars, packaging fix
+
+- SplashScreen: "CaveDream" wordmark fade in/out -> title; any key/click skips
+- Directional shadows: SunShadow (ray-march toward sun, 3-sample soft edge), GameClock.sunDirection
+  (x=-cos so shadows fall away from the left-risen sun); sky cells skip world darkness veil (sun no longer dimmed)
+- Fix crash entering game: LightEngine.skyAt/blockAt out-of-bounds guard + clamp drawLighting loop (AIOOB at world edge)
+- Class select: ClassScreen (wooden notice-board, 5 big weapon-icon cards) -> grants class weapon
+- Player stats: PlayerClass (5) + PlayerStats (dream-sleep HP / mana MP, exponential regen, combat rules, dream-break)
+- HUD: moon/stars pip bars with per-pip alpha fill (empty=transparent, full=solid)
+- OOP: Material enum drives Tool/Item tiers
+- Packaging: emit start-game.bat (bundled JRE) since jpackage exe gets blocked by AV; verify via real game JVM child process
+- Window 1600x900 (crisper px/tile, logical 16 grid unchanged)
+- Tests: SunShadow, PlayerStats, LightEngine OOB; full build green

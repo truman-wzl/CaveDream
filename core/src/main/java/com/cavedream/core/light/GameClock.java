@@ -71,6 +71,16 @@ public final class GameClock {
         return daylightLevel0to15() + 1;
     }
 
+    /**
+     * 指向太阳的单位向量 {x,y}，与 SkyRenderer 的太阳屏幕位置一致（太阳从画面左侧升起）：
+     * 6点→左上(-1,0)、12点→天顶(0,1)、18点→右上(+1,0)；夜间 y 分量为负→ {@link SunShadow} 不投影。
+     * 注意 x 取 -cos：清晨太阳在画面左，阴影才拖向右侧（背光侧）。
+     */
+    public float[] sunDirection() {
+        double theta = (hour() - 6) / 12.0 * Math.PI;
+        return new float[]{(float) -Math.cos(theta), (float) Math.sin(theta)};
+    }
+
     /** HH:MM 文本，供 HUD。 */
     public String format() {
         return String.format("%02d:%02d", hourOfDay(), minuteOfHour());

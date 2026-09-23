@@ -103,13 +103,19 @@ public final class LightEngine {
         return Math.max(s, bl);
     }
 
-    /** 纯天光几何值 0~15（不随昼夜，供测试/调试）。 */
+    /** 纯天光几何值 0~15（不随昼夜，供测试/调试）；越界返回 0。 */
     public int skyAt(int x, int y) {
-        return sky == null ? 0 : sky[y * w + x] & 0xFF;
+        if (sky == null || x < 0 || x >= w || y < 0 || y >= h) {
+            return 0;
+        }
+        return sky[y * w + x] & 0xFF;
     }
 
-    /** 纯块光值 0~15（供测试/调试）。 */
+    /** 纯块光值 0~15（供测试/调试）；越界返回 0。 */
     public int blockAt(int x, int y) {
-        return block == null ? 0 : block[y * w + x] & 0xFF;
+        if (block == null || x < 0 || x >= w || y < 0 || y >= h) {
+            return 0;
+        }
+        return block[y * w + x] & 0xFF;
     }
 }

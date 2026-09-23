@@ -4,8 +4,11 @@ import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.cavedream.core.net.ServerConfig;
+import com.cavedream.core.player.PlayerClass;
 import com.cavedream.core.render.ItemCatalog;
+import com.cavedream.core.screen.ClassScreen;
 import com.cavedream.core.screen.PlayScreen;
+import com.cavedream.core.screen.SplashScreen;
 import com.cavedream.core.screen.TitleScreen;
 
 /**
@@ -20,6 +23,11 @@ public class CaveDreamGame extends Game {
     public void create() {
         Gdx.app.log("CaveDream", "登录界面已就位");
         ItemCatalog.startAsync(ServerConfig.BASE_URL);   // 后台拉取 DB 物品图集，就绪前渲染回退程序生成
+        setScreen(new SplashScreen(this));   // 开场字标淡入淡出 → 主菜单
+    }
+
+    /** splash 结束后进入主菜单。 */
+    public void showTitle() {
         setScreen(new TitleScreen(this));
     }
 
@@ -37,9 +45,14 @@ public class CaveDreamGame extends Game {
         super.render();
     }
 
-    /** 标题界面选择"新的梦"：进入 L1（当前每次从新梦开始，M3 接存档后可"继续"）。 */
+    /** 标题选“新的梦”→先进选职业屏。 */
     public void startNewDream() {
-        setScreen(new PlayScreen(this));
+        setScreen(new ClassScreen(this));
+    }
+
+    /** 选定职业后进入 L1（发放该职业主武器、按职业初始化双条）。 */
+    public void startNewDream(PlayerClass playerClass) {
+        setScreen(new PlayScreen(this, playerClass));
     }
 
     /** 游玩中按 ESC：退回标题界面（暂不保留世界，M3 存档系统接入后改为持久返回）。 */
