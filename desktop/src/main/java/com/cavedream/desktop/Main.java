@@ -10,9 +10,9 @@ public final class Main {
     public static void main(String[] args) {
         Lwjgl3ApplicationConfiguration config = new Lwjgl3ApplicationConfiguration();
         config.setTitle("CaveDream");
-        // 启动即全屏（桌面原生分辨率）；游戏内 F11 可切回窗口模式
-        config.setFullscreenMode(Lwjgl3ApplicationConfiguration.getDisplayMode());
-        config.setWindowedMode(1280, 720);   // F11 切回窗口时的尺寸
+        // 窗口化启动：保留系统标题栏 + 最小化/最大化/关闭按钮（非无边框）；游戏内 F11 可切全屏
+        config.setWindowedMode(1280, 720);
+        config.setResizable(true);
         config.useVsync(true);
         config.setForegroundFPS(60);
         new Lwjgl3Application(new CaveDreamGame(), config);

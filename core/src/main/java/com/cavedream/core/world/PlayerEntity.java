@@ -125,6 +125,16 @@ public final class PlayerEntity {
         return onGround;
     }
 
+    /** 本帧水平是否移动（驱动走路动画）。 */
+    public boolean isMoving() {
+        return vx != 0f;
+    }
+
+    /** 垂直速度（驱动跳跃/下落姿态）。 */
+    public float vy() {
+        return vy;
+    }
+
     /** 当前面向：1 右 / -1 左。 */
     public int facing() {
         return facing;

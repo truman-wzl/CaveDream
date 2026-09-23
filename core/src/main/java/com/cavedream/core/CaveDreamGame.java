@@ -3,6 +3,8 @@ package com.cavedream.core;
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
+import com.cavedream.core.net.ServerConfig;
+import com.cavedream.core.render.ItemCatalog;
 import com.cavedream.core.screen.PlayScreen;
 import com.cavedream.core.screen.TitleScreen;
 
@@ -12,11 +14,12 @@ import com.cavedream.core.screen.TitleScreen;
  */
 public class CaveDreamGame extends Game {
 
-    private boolean fullscreen = true;
+    private boolean fullscreen = false;   // 默认窗口化启动（与 Main 一致）；F11 首次按下切全屏
 
     @Override
     public void create() {
         Gdx.app.log("CaveDream", "登录界面已就位");
+        ItemCatalog.startAsync(ServerConfig.BASE_URL);   // 后台拉取 DB 物品图集，就绪前渲染回退程序生成
         setScreen(new TitleScreen(this));
     }
 

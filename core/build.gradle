@@ -13,3 +13,23 @@ dependencies {
     testImplementation libs.assertj.core
     testRuntimeOnly libs.junit.platform.launcher
 }
+
+// 离线烘焙器：gradlew :core:bakeItems --args "<输出目录>"（默认写到 server 资源目录）
+tasks.register('bakeItems', JavaExec) {
+    group = 'assets'
+    description = '用程序化绘制导出物品种子 PNG 到 server/src/main/resources/assets/items'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.cavedream.core.render.AssetBaker'
+    // 默认输出目录；命令行 --args="..." 可覆盖
+    args = [project.rootDir.toString() + '/server/src/main/resources/assets/items']
+}
+
+// 地图俯瞰导出器：gradlew :core:exportMap --args "<l1|tiny> <seed> <outDir>"
+tasks.register('exportMap', JavaExec) {
+    group = 'assets'
+    description = '按 布局+种子 生成整层并导出带要素标记的全图俯瞰 PNG'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.cavedream.core.world.gen.MapExporter'
+    // 默认：l1 布局、种子 20260922、输出到 build/maps；命令行 --args 覆盖
+    args = ['l1', '20260922', project.rootDir.toString() + '/build/maps']
+}

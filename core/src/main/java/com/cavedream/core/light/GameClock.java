@@ -1,0 +1,82 @@
+package com.cavedream.core.light;
+
+/**
+ * 游戏时钟与昼夜天光（GDD 光照系统）。
+ * 节奏：1 真实分钟 = 1 游戏小时 ⇒ 1 真实秒 = 1 游戏分钟；24 真实分钟 = 一昼夜（1440 游戏分）。
+ * 天光分 16 级（1 最暗=全黑 … 16 最亮=正午），由时刻的分段曲线决定，供 {@link LightEngine} 缩放天光。
+ */
+public final class GameClock {
+
+    /** 内部亮度用 0~15（对外 1~16 级 = 内部值 +1）。 */
+    public static final int MAX_LEVEL = 15;
+
+    // 时刻锚点：{小时, 白昼系数 0~1}，线性插值；夜间=0（全黑，靠角色光/光源照亮）
+    private static final double[][] CURVE = {
+            {0, 0.0}, {5, 0.0}, {6, 0.16}, {8, 0.55}, {11, 0.95}, {12, 1.0},
+            {15, 0.95}, {18, 0.5}, {20, 0.14}, {21, 0.0}, {24, 0.0},
+    };
+
+    private double gameMinutes;   // 0 ~ 1440
+
+    public GameClock() {
+        this(12 * 60);   // 从正午开始，进入即明亮
+    }
+
+    public GameClock(double startMinutes) {
+        this.gameMinutes = startMinutes;
+    }
+
+    /** 推进：realSeconds 为真实秒。1 真实秒 = 1 游戏分钟。 */
+    public void update(float realSeconds) {
+        gameMinutes += realSeconds;
+        gameMinutes %= 1440.0;
+        if (gameMinutes < 0) {
+            gameMinutes += 1440.0;
+        }
+    }
+
+    public double hour() {
+        return gameMinutes / 60.0;
+    }
+
+    public int hourOfDay() {
+        return (int) (gameMinutes / 60.0) % 24;
+    }
+
+    public int minuteOfHour() {
+        return (int) Math.floor(gameMinutes) % 60;
+    }
+
+    /** 白昼系数 0~1（对当前时刻插值）。 */
+    public double daylightFactor() {
+        double h = hour();
+        for (int i = 0; i < CURVE.length - 1; i++) {
+            double h0 = CURVE[i][0], f0 = CURVE[i][1];
+            double h1 = CURVE[i + 1][0], f1 = CURVE[i + 1][1];
+            if (h >= h0 && h <= h1) {
+                double t = (h1 == h0) ? 0 : (h - h0) / (h1 - h0);
+                return f0 + (f1 - f0) * t;
+            }
+        }
+        return 0.0;
+    }
+
+    /** 天光内部等级 0~15（正午 15，午夜 0）。 */
+    public int daylightLevel0to15() {
+        return clamp((int) Math.round(daylightFactor() * MAX_LEVEL), 0, MAX_LEVEL);
+    }
+
+    /** 天光对外 1~16 级。 */
+    public int skyLevel1to16() {
+        return daylightLevel0to15() + 1;
+    }
+
+    /** HH:MM 文本，供 HUD。 */
+    public String format() {
+        return String.format("%02d:%02d", hourOfDay(), minuteOfHour());
+    }
+
+    private static int clamp(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+}
