@@ -54,6 +54,16 @@ public final class PlayerStats {
         return dreamBreak;
     }
 
+    /** 存档恢复：直接设定当前值（钳到 [0,上限]）。 */
+    public void setLucidity(int v) {
+        lucidity = Math.max(0, Math.min(maxLucidity, v));
+        dreamBreak = lucidity == 0;
+    }
+
+    public void setMana(int v) {
+        mana = Math.max(0, Math.min(maxMana, v));
+    }
+
     /** 受伤：扣梦眠并进入战斗态；归零触发溃梦。 */
     public void damage(int amount) {
         if (amount <= 0 || dreamBreak) {

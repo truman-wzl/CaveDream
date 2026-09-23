@@ -21,6 +21,7 @@ import com.cavedream.core.light.SunShadow;
 import com.cavedream.core.render.BlockTextures;
 import com.cavedream.core.render.ItemCatalog;
 import com.cavedream.core.render.SkyRenderer;
+import com.cavedream.core.save.GameSave;
 import com.cavedream.core.inventory.Inventory;
 import com.cavedream.core.item.Item;
 import com.cavedream.core.player.PlayerClass;
@@ -35,7 +36,6 @@ import com.cavedream.core.world.Tool;
 import com.cavedream.core.world.mob.Mob;
 import com.cavedream.core.world.mob.Slime;
 import com.cavedream.core.world.mob.SpawnManager;
-import com.cavedream.core.world.gen.TestBed;
 
 /**
  * L1 浅梦箱庭游玩界面（M2 垂直切片）：可走、可跳、可挖、可放。
@@ -79,7 +79,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private TextureRegion pickaxeRegion;
     private BlockType holdBlock = BlockType.DIRT;
     private final Vector3 mouseWorld = new Vector3();
-    private final int[] surfaceY;
     private final float[] dust = new float[90 * 3];   // x, y, 相位
     private final TextureRegion[] skyRows = new TextureRegion[256];
     private final TextureRegion[] depthRows = new TextureRegion[256];
@@ -114,15 +113,28 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private static final float SWING_DUR = 0.28f;                            // 一次挥击时长（秒）
     private float swingT;                                                     // 挥击进度 0~1
     private boolean swinging;                                                 // 正在挥击
+    // —— 战斗闭环 / 存档 ——
+    private final java.util.HashMap<Integer, Integer> edits = new java.util.HashMap<>();   // 改动格 idx→方块id
+    private int coins;                                                        // 铸梦币
+    private boolean downed;                                                   // 濒死态
+    private float downedT;                                                    // 濒死倒计时（秒）
+    private float spawnX, spawnY;                                             // 出生点（溃梦复活）
+    // —— 世界/存档/暂停 ——
+    private final long seed;                                                  // 世界种子（存档用）
+    private static final int LIGHT_RADIUS = 90;                               // 局部光照重算半径（格）
+    private int lastLCx = Integer.MIN_VALUE, lastLCy;                         // 上次光照重算中心
+    private float saveTimer;                                                  // 自动存档计时
+    private boolean paused;                                                   // ESC 暂停菜单
+    private String toast;                                                     // 顶部提示（如已存档）
+    private float toastT;
 
-    public PlayScreen(CaveDreamGame game, PlayerClass playerClass) {
+    public PlayScreen(CaveDreamGame game, PlayerClass playerClass, LayerWorld world,
+                      long seed, int spawnTileX, int spawnTileY) {
         this.game = game;
         this.playerClass = playerClass;
         this.stats = new PlayerStats(playerClass);
-        // 物品渲染验收阶段：用手工测试床（不依赖 WorldGenerator），一屏展示所有材料
-        TestBed bed = TestBed.build();
-        world = bed.world();
-        surfaceY = bed.surfaceY();
+        this.world = world;
+        this.seed = seed;
         java.util.Random drnd = new java.util.Random(9L);
         for (int i = 0; i < dust.length; i += 3) {
             dust[i] = drnd.nextFloat();
@@ -130,8 +142,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             dust[i + 2] = drnd.nextFloat() * 6.28f;
         }
         player = new PlayerEntity(
-                bed.spawnX() * (float) TILE,
-                bed.spawnY() * (float) TILE + 1f);
+                spawnTileX * (float) TILE,
+                spawnTileY * (float) TILE + 1f);
+        spawnX = player.x();
+        spawnY = player.y();
 
         batch = new SpriteBatch();
         camera = new OrthographicCamera();
@@ -157,7 +171,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             skyRows[i] = new TextureRegion(textures.skyGrad(), 0, i, 8, 8);
             depthRows[i] = new TextureRegion(textures.depthGrad(), 0, i, 8, 8);
         }
-        lightEngine.recompute(world);   // 初始静态光照场
+        lightEngine.recomputeRegion(world, spawnTileX, spawnTileY, LIGHT_RADIUS);   // 初始局部光照（围绕出生点）
+        lastLCx = spawnTileX;
+        lastLCy = spawnTileY;
     }
 
     @Override
@@ -176,51 +192,60 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     @Override
     public void render(float delta) {
         if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
-            game.backToTitle();
-            return;
+            paused = !paused;   // ESC 弹菜单并暂停（怪/伤害一并冻结）
         }
-        time += delta;
         frameDelta = delta;
-        updateInput();
-        player.update(world,
-                keyDown(Input.Keys.A) || keyDown(Input.Keys.LEFT),
-                keyDown(Input.Keys.D) || keyDown(Input.Keys.RIGHT),
-                keyDown(Input.Keys.W) || keyDown(Input.Keys.SPACE) || keyDown(Input.Keys.UP),
-                delta);
-        // 走路动画相位：地面且移动时推进，否则归零
-        if (player.isMoving() && player.isOnGround()) {
-            walkPhase += delta * 11f;
+        if (toastT > 0f) {
+            toastT -= delta;
+        }
+        if (paused) {
+            handlePauseInput();
         } else {
-            walkPhase = 0f;
+            time += delta;
+            updateInput();
+            player.update(world,
+                    keyDown(Input.Keys.A) || keyDown(Input.Keys.LEFT),
+                    keyDown(Input.Keys.D) || keyDown(Input.Keys.RIGHT),
+                    keyDown(Input.Keys.W) || keyDown(Input.Keys.SPACE) || keyDown(Input.Keys.UP),
+                    delta);
+            if (player.isMoving() && player.isOnGround()) {
+                walkPhase += delta * 11f;
+            } else {
+                walkPhase = 0f;
+            }
+            updateCamera();
+            clock.update(delta);
+            daylight0to15 = clock.daylightLevel0to15();
+            float[] sd = clock.sunDirection();
+            sunX = sd[0];
+            sunY = sd[1];
+            ensureLighting();
+            rebuildDynamicLights();
+            updateDrops(delta);
+            stats.update(delta);
+            updateMobs(delta);
+            saveTimer += delta;
+            if (saveTimer >= 30f) {   // 每 30 秒自动存档
+                saveTimer = 0f;
+                saveNow();
+            }
         }
-        updateCamera();
-
-        // —— 光照推进：昼夜、世界改动重算、动态光源（角色 + 装备/武器特效光晕）——
-        clock.update(delta);
-        daylight0to15 = clock.daylightLevel0to15();
-        float[] sd = clock.sunDirection();
-        sunX = sd[0];
-        sunY = sd[1];
-        if (lightDirty) {
-            lightEngine.recompute(world);
-            lightDirty = false;
+        renderWorld();
+        if (paused) {
+            drawPauseMenu();
         }
-        rebuildDynamicLights();
-        updateDrops(delta);
-        stats.update(delta);
-        updateMobs(delta);
+    }
 
+    /** 绘制世界 + HUD（不含更新）；暂停时画面冻结但仍可见。 */
+    private void renderWorld() {
         float d = daylight0to15 / (float) LightEngine.MAX_LEVEL;   // 昼系 0~1
         Gdx.gl.glClearColor(0.043f + 0.32f * d, 0.055f + 0.42f * d, 0.10f + 0.55f * d, 1f);   // 梦夜↔白昼底色
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-
-        // 动态视差天空（屏幕空间，世界层之前）
         batch.setProjectionMatrix(uiCam.combined);
         batch.begin();
         sky.draw(batch, Gdx.graphics.getWidth(), Gdx.graphics.getHeight(),
                 camera.position.x, time, (float) clock.hour(), d);
         batch.end();
-
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         drawVisibleTiles();
@@ -237,6 +262,95 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawHotbar();
         drawStats();
         drawInventory();
+        drawToast();
+    }
+
+    /** 光照：脏（挖/放）或玩家移到新区域时，按玩家周围窗口局部重算。 */
+    private void ensureLighting() {
+        int cx = (int) Math.floor(player.centerX() / TILE);
+        int cy = (int) Math.floor(player.centerY() / TILE);
+        if (lightDirty || Math.abs(cx - lastLCx) > LIGHT_RADIUS / 2 || Math.abs(cy - lastLCy) > LIGHT_RADIUS / 2) {
+            lightEngine.recomputeRegion(world, cx, cy, LIGHT_RADIUS);
+            lastLCx = cx;
+            lastLCy = cy;
+            lightDirty = false;
+        }
+    }
+
+    private void saveNow() {
+        game.saveGame(toSave());
+        toast = "已存档";
+        toastT = 2f;
+    }
+
+    private void drawToast() {
+        if (toastT <= 0f || toast == null) {
+            return;
+        }
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        font.setColor(1f, 0.95f, 0.6f, Math.min(1f, toastT));
+        font.draw(batch, toast, uiCam.viewportWidth / 2f - 24, uiCam.viewportHeight - 60);
+        font.setColor(1, 1, 1, 1);
+        batch.end();
+    }
+
+    /** 暂停菜单三项：返回游戏 / 保存并退出 / 设置。 */
+    private static final String[] PAUSE_OPTS = {"返回游戏", "保存并退出", "设置"};
+
+    private float pauseBtnX() {
+        return uiCam.viewportWidth / 2f - 130f;
+    }
+
+    private float pauseBtnTop() {
+        return uiCam.viewportHeight / 2f + (PAUSE_OPTS.length * 70f) / 2f;
+    }
+
+    private void handlePauseInput() {
+        if (!Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
+            return;
+        }
+        float mx = Gdx.input.getX(), my = uiCam.viewportHeight - Gdx.input.getY();
+        float cx = pauseBtnX(), top = pauseBtnTop(), bw = 260f, bh = 54f, gap = 16f;
+        for (int i = 0; i < PAUSE_OPTS.length; i++) {
+            float y = top - (i + 1) * (bh + gap) + gap;
+            if (mx >= cx && mx <= cx + bw && my >= y && my <= y + bh) {
+                if (i == 0) {
+                    paused = false;
+                } else if (i == 1) {
+                    saveNow();
+                    game.backToTitle();
+                } else {
+                    toast = "设置开发中";
+                    toastT = 2f;
+                }
+                return;
+            }
+        }
+    }
+
+    private void drawPauseMenu() {
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        batch.setColor(0, 0, 0, 0.55f);
+        batch.draw(pixel, 0, 0, uiCam.viewportWidth, uiCam.viewportHeight);
+        batch.setColor(1, 1, 1, 1);
+        float bw = 260f, bh = 54f, gap = 16f;
+        float cx = pauseBtnX(), top = pauseBtnTop();
+        float panelH = PAUSE_OPTS.length * (bh + gap) + 80f;
+        WoodUi.panel(batch, pixel, cx - 24f, top - panelH + bh, bw + 48f, panelH);
+        font.setColor(0.95f, 0.9f, 0.7f, 1f);
+        font.draw(batch, "已暂停", cx, top - 12f);
+        font.setColor(1, 1, 1, 1);
+        float mx = Gdx.input.getX(), my = uiCam.viewportHeight - Gdx.input.getY();
+        for (int i = 0; i < PAUSE_OPTS.length; i++) {
+            float y = top - (i + 1) * (bh + gap) + gap;
+            boolean hover = mx >= cx && mx <= cx + bw && my >= y && my <= y + bh;
+            WoodUi.plank(batch, pixel, cx, y, bw, bh, hover);
+            font.setColor(1, 1, 1, 1);
+            font.draw(batch, PAUSE_OPTS[i], cx + bw / 2f - 32f, y + bh / 2f + 6f);
+        }
+        batch.end();
     }
 
     /** 双条 HUD（屏幕左上）：梦眠=月相图标、魔能=蓝五星；图标透明度=该格填充度（缺=透明、满=实心）。 */
@@ -252,6 +366,21 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         font.draw(batch, stats.lucidity() + "/" + stats.maxLucidity(), x + moons * 26f + 8, top - 6);
         font.draw(batch, stats.mana() + "/" + stats.maxMana(), x + stars * 26f + 8, top - 36);
         font.setColor(1, 1, 1, 1);
+        // 铸梦币 + 操作提示（右上）
+        font.setColor(1f, 0.9f, 0.4f, 1f);
+        font.draw(batch, "铸梦币 " + coins, uiCam.viewportWidth - 130, uiCam.viewportHeight - 24);
+        font.setColor(0.8f, 0.82f, 0.9f, 0.9f);
+        font.draw(batch, "E 背包・F5 存档・左键使用・右键放置", uiCam.viewportWidth - 300, uiCam.viewportHeight - 46);
+        font.setColor(1, 1, 1, 1);
+        if (downed) {                                  // 濒死：红暗角 + 倒计时
+            batch.setColor(0.45f, 0f, 0f, 0.4f);
+            batch.draw(pixel, 0, 0, uiCam.viewportWidth, uiCam.viewportHeight);
+            batch.setColor(1, 1, 1, 1);
+            font.setColor(1f, 0.45f, 0.45f, 1f);
+            font.draw(batch, "濒死… " + (int) Math.ceil(downedT) + "s 后溃梦回出生点",
+                    uiCam.viewportWidth / 2f - 130, uiCam.viewportHeight * 0.4f);
+            font.setColor(1, 1, 1, 1);
+        }
         batch.end();
     }
 
@@ -323,6 +452,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
             return;
         }
+        if (downed) {                          // 濒死：不可挖掘/攻击/放置（仅可移动，移速已降）
+            miningNow = false;
+            return;
+        }
         int[] tile = mouseTile();
         Item held = inventory.selectedItem();
         Tool heldTool = held == null ? null : Tool.byItemId(held.id());
@@ -352,8 +485,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         // 攻击：挥击命中目标格上的怪（受冷却）；空挥也进冷却
         if (leftPressed && attackCd <= 0f) {
             Mob hit = tile != null ? mobAt(tile[0], tile[1]) : null;
-            if (hit != null) {
-                hit.damage(weaponDamage);
+            if (hit != null && hit.damage(weaponDamage)) {
+                coins += 1 + (int) (Math.random() * 4);   // 击杀掉落铸梦币
             }
             attackCd = 0.4f;
         }
@@ -373,6 +506,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 mining = true;
                 if (digProgress >= 1f) {
                     world.setBlock(tile[0], tile[1], BlockType.AIR);
+                    edits.put(tile[1] * world.getWidth() + tile[0], (int) BlockType.AIR.id());   // 记录改动供存档
                     spawnDrop(tile[0], tile[1], Item.ofBlock(b));   // 掉成地上的物品，走近再拾取
                     lightDirty = true;
                     digProgress = 0f;
@@ -397,6 +531,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 && world.blockAt(tile[0], tile[1]) == BlockType.AIR
                 && !player.overlapsTile(tile[0], tile[1])) {
             world.setBlock(tile[0], tile[1], held.block());
+            edits.put(tile[1] * world.getWidth() + tile[0], (int) held.block().id());   // 记录改动供存档
             inventory.takeSelectedOne();
             lightDirty = true;
         }
@@ -564,10 +699,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     /** GRASS 视为 DIRT 的地表变体（共用本体色），二者之间不算“异材”、不出接缝。 */
     private static BlockType body(BlockType b) {
         return b == BlockType.GRASS ? BlockType.DIRT : b;
-    }
-
-    private int surfaceCol(int x) {
-        return surfaceY[clampi(x, 0, surfaceY.length - 1)];
     }
 
     private void fill(float x, float y, float w, float h, float r, float g, float b, float a) {
@@ -752,8 +883,20 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 }
             }
         }
-        if (stats.isDreamBreak()) {
-            stats.reviveAtAnchor();   // 溃梦回锚点（暂不传送，M3 接床/锚点后补）
+        if (stats.isDreamBreak() && !downed) {           // 梦眠归零 → 进入 10 秒濒死
+            downed = true;
+            downedT = 10f;
+            player.setSpeedScale(0.4f);
+        }
+        if (downed) {
+            downedT -= dt;
+            if (downedT <= 0f) {                          // 未救回 → 溃梦：回出生点复活
+                downed = false;
+                player.setSpeedScale(1f);
+                stats.reviveAtAnchor();
+                player.setPos(spawnX, spawnY);
+                spawner.mobs().removeIf(m -> Math.hypot(m.centerX() - spawnX, m.centerY() - spawnY) < 12 * TILE);
+            }
         }
     }
 
@@ -961,6 +1104,53 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 camera.position.y + camera.viewportHeight / 2 - 16);
         font.setColor(1, 1, 1, 1);
         batch.end();
+    }
+
+    /** 导出当前世界为存档数据（改动 diff + 玩家状态）。 */
+    public GameSave toSave() {
+        GameSave s = new GameSave();
+        s.className = playerClass.name();
+        s.seed = (int) seed;
+        s.editIdx = new int[edits.size()];
+        s.editBlock = new int[edits.size()];
+        int i = 0;
+        for (java.util.Map.Entry<Integer, Integer> e : edits.entrySet()) {
+            s.editIdx[i] = e.getKey();
+            s.editBlock[i] = e.getValue();
+            i++;
+        }
+        s.playerX = player.x();
+        s.playerY = player.y();
+        s.invItem = inventory.itemIdSnapshot();
+        s.invCount = inventory.countSnapshot();
+        s.invSelected = inventory.selected();
+        s.lucidity = stats.lucidity();
+        s.maxLucidity = stats.maxLucidity();
+        s.mana = stats.mana();
+        s.maxMana = stats.maxMana();
+        s.clockMinutes = clock.totalMinutes();
+        s.coins = coins;
+        return s;
+    }
+
+    /** 应用存档：重放世界改动 + 恢复玩家/背包/双条/时刻。 */
+    public void applySave(GameSave s) {
+        edits.clear();
+        if (s.editIdx != null && s.editBlock != null) {
+            int w = world.getWidth();
+            for (int i = 0; i < s.editIdx.length && i < s.editBlock.length; i++) {
+                int idx = s.editIdx[i], b = s.editBlock[i];
+                world.setBlock(idx % w, idx / w, BlockType.of((short) b));
+                edits.put(idx, b);
+            }
+        }
+        player.setPos(s.playerX, s.playerY);
+        inventory.loadFrom(s.invItem, s.invCount, s.invSelected);
+        stats.setLucidity(s.lucidity);
+        stats.setMana(s.mana);
+        clock.setTotalMinutes(s.clockMinutes);
+        coins = s.coins;
+        lightDirty = true;
     }
 
     @Override

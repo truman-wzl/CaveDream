@@ -92,6 +92,16 @@ public final class GameClock {
         return String.format("%02d:%02d", hourOfDay(), minuteOfHour());
     }
 
+    /** 当前总分钟（自 0:00，0~1439），供存档。 */
+    public int totalMinutes() {
+        return (int) Math.floor(gameMinutes);
+    }
+
+    /** 存档恢复时刻。 */
+    public void setTotalMinutes(int minutes) {
+        gameMinutes = Math.floorMod(minutes, 1440);
+    }
+
     private static int clamp(int v, int lo, int hi) {
         return Math.max(lo, Math.min(hi, v));
     }

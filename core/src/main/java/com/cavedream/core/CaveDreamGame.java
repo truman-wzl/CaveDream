@@ -3,11 +3,14 @@ package com.cavedream.core;
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
+import com.badlogic.gdx.files.FileHandle;
 import com.cavedream.core.net.ServerConfig;
 import com.cavedream.core.player.PlayerClass;
 import com.cavedream.core.render.ItemCatalog;
+import com.cavedream.core.save.GameSave;
 import com.cavedream.core.screen.ClassScreen;
-import com.cavedream.core.screen.PlayScreen;
+import com.cavedream.core.screen.LoadingScreen;
+import com.cavedream.core.screen.SaveListScreen;
 import com.cavedream.core.screen.SplashScreen;
 import com.cavedream.core.screen.TitleScreen;
 
@@ -31,12 +34,17 @@ public class CaveDreamGame extends Game {
         setScreen(new TitleScreen(this));
     }
 
+    /** 主菜单“继续游戏”→存档列表屏。 */
+    public void showSaveList() {
+        setScreen(new SaveListScreen(this));
+    }
+
     @Override
     public void render() {
         // F11 全屏/窗口切换（用 Graphics 接口，core 不依赖 LWJGL 后端）
         if (Gdx.input.isKeyJustPressed(Input.Keys.F11)) {
             if (fullscreen) {
-                Gdx.graphics.setWindowedMode(1280, 720);
+                Gdx.graphics.setWindowedMode(1600, 900);
             } else {
                 Gdx.graphics.setFullscreenMode(Gdx.graphics.getDisplayMode());
             }
@@ -50,13 +58,73 @@ public class CaveDreamGame extends Game {
         setScreen(new ClassScreen(this));
     }
 
-    /** 选定职业后进入 L1（发放该职业主武器、按职业初始化双条）。 */
+    /** 选定职业后→生成加载屏（后台生成中世界，完成进 PlayScreen）。 */
     public void startNewDream(PlayerClass playerClass) {
-        setScreen(new PlayScreen(this, playerClass));
+        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null));
     }
 
-    /** 游玩中按 ESC：退回标题界面（暂不保留世界，M3 存档系统接入后改为持久返回）。 */
+    private static long freshSeed() {
+        return new java.util.Random().nextLong();
+    }
+
+    /** 游玩中按 ESC：退回标题界面（世界不保留；下次“继续游戏”从存档文件读回）。 */
     public void backToTitle() {
         setScreen(new TitleScreen(this));
+    }
+
+    /* ---------------- 本地存档（可反复存/读测试） ---------------- */
+
+    private FileHandle saveFile() {
+        return Gdx.files.external(".cavedream/save1.json");
+    }
+
+    /** 是否已有存档（驱动“继续游戏”可用性）。 */
+    public boolean hasSave() {
+        return !listSaves().isEmpty();
+    }
+
+    /** 列出本地已有存档（扫 .cavedream/save*.json）。 */
+    public java.util.List<GameSave> listSaves() {
+        java.util.List<GameSave> out = new java.util.ArrayList<>();
+        FileHandle dir = Gdx.files.external(".cavedream");
+        if (!dir.exists()) {
+            return out;
+        }
+        for (FileHandle f : dir.list()) {
+            String n = f.name();
+            if (n.startsWith("save") && n.endsWith(".json")) {
+                try {
+                    out.add(GameSave.fromJson(f.readString()));
+                } catch (Exception ignore) {
+                    // 损坏存档跳过
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 写存档到本地文件。 */
+    public void saveGame(GameSave save) {
+        FileHandle f = saveFile();
+        f.parent().mkdirs();
+        f.writeString(save.toJson(), false);
+        Gdx.app.log("CaveDream", "已存档 → " + f.path());
+    }
+
+    /** 继续游戏：读回默认存档 → 交给加载屏按种子重建世界并套用。无存档则转选职业。 */
+    public void continueGame() {
+        FileHandle f = saveFile();
+        if (!f.exists()) {
+            Gdx.app.log("CaveDream", "无存档，转新游戏");
+            startNewDream();
+            return;
+        }
+        continueGame(GameSave.fromJson(f.readString()));
+    }
+
+    /** 继续指定存档：加载屏按存档种子重建中世界，进 PlayScreen 后套用改动/状态。 */
+    public void continueGame(GameSave save) {
+        PlayerClass pc = PlayerClass.valueOf(save.className);
+        setScreen(new LoadingScreen(this, pc, save.seed, save));
     }
 }

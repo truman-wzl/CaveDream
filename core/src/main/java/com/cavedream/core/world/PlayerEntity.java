@@ -22,12 +22,26 @@ public final class PlayerEntity {
     private float vx;
     private float vy;
     private boolean onGround;
+    private float speedScale = 1f;   // 移速倍率（濒死时 0.4）
     /** 面向：1 右 / -1 左（贴图默认朝右，渲染时据此镜像） */
     private int facing = 1;
 
     public PlayerEntity(float x, float y) {
         this.x = x;
         this.y = y;
+    }
+
+    /** 直接设定位置（读档/复活用）。 */
+    public void setPos(float nx, float ny) {
+        this.x = nx;
+        this.y = ny;
+        this.vx = 0f;
+        this.vy = 0f;
+    }
+
+    /** 移速倍率（濒死降速）。 */
+    public void setSpeedScale(float s) {
+        this.speedScale = s;
     }
 
     /**
@@ -38,7 +52,7 @@ public final class PlayerEntity {
     public void update(LayerWorld world, boolean left, boolean right, boolean jump, float dt) {
         dt = Math.min(dt, 1f / 30f);   // 防卡顿大跳穿墙
 
-        vx = (right ? MOVE_SPEED : 0f) + (left ? -MOVE_SPEED : 0f);
+        vx = ((right ? MOVE_SPEED : 0f) + (left ? -MOVE_SPEED : 0f)) * speedScale;
         if (vx > 0) {
             facing = 1;
         } else if (vx < 0) {

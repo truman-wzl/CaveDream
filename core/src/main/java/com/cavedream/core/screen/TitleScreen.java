@@ -165,7 +165,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
                 Gdx.app.log("CaveDream", "坠入新的梦……");
                 game.startNewDream();
             }
-            case 1 -> showNotice("还没有做过梦，无法继续（存档系统随 M3 上线）");
+            case 1 -> game.showSaveList();
             case 2 -> openAccount();
             default -> Gdx.app.exit();
         }

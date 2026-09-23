@@ -92,6 +92,84 @@ public final class LightEngine {
         }
     }
 
+    /**
+     * 局部重算：只算以 (cx,cy) 为中心、半径 r 的方框（大世界中避免整场 BFS 卡顿）。
+     * 框外保留上次结果（玩家探索过的区域不丢光）；未到达区域为 0（不可见）。
+     */
+    public void recomputeRegion(LayerWorld world, int cx, int cy, int r) {
+        int nw = world.getWidth(), nh = world.getHeight();
+        if (sky == null || w != nw || h != nh) {
+            w = nw;
+            h = nh;
+            sky = new byte[w * h];
+            block = new byte[w * h];
+        }
+        int x0 = Math.max(0, cx - r), x1 = Math.min(w - 1, cx + r);
+        int y0 = Math.max(0, cy - r), y1 = Math.min(h - 1, cy + r);
+        for (int y = y0; y <= y1; y++) {
+            for (int x = x0; x <= x1; x++) {
+                int idx = y * w + x;
+                sky[idx] = 0;
+                block[idx] = 0;
+            }
+        }
+        ArrayDeque<Integer> qSky = new ArrayDeque<>();
+        ArrayDeque<Integer> qBlk = new ArrayDeque<>();
+        for (int x = x0; x <= x1; x++) {
+            boolean open = true;
+            for (int y = h - 1; y >= 0; y--) {
+                BlockType b = world.blockAt(x, y);
+                if (open) {
+                    if (!b.solid()) {
+                        if (y >= y0 && y <= y1) {
+                            int idx = y * w + x;
+                            sky[idx] = (byte) MAX_LEVEL;
+                            qSky.add(idx);
+                        }
+                    } else if (b != BlockType.FOG) {
+                        open = false;
+                    }
+                }
+                if (b.light() > 0 && y >= y0 && y <= y1) {
+                    int idx = y * w + x;
+                    int lv = Math.min(MAX_LEVEL, b.light());
+                    if (lv > (block[idx] & 0xFF)) {
+                        block[idx] = (byte) lv;
+                        qBlk.add(idx);
+                    }
+                }
+            }
+        }
+        propagateBox(sky, qSky, world, x0, x1, y0, y1);
+        propagateBox(block, qBlk, world, x0, x1, y0, y1);
+    }
+
+    private void propagateBox(byte[] arr, ArrayDeque<Integer> queue, LayerWorld world, int x0, int x1, int y0, int y1) {
+        int[] dx = {1, -1, 0, 0};
+        int[] dy = {0, 0, 1, -1};
+        while (!queue.isEmpty()) {
+            int idx = queue.poll();
+            int cur = arr[idx] & 0xFF;
+            if (cur <= 1) {
+                continue;
+            }
+            int x = idx % w, y = idx / w;
+            for (int i = 0; i < 4; i++) {
+                int nx = x + dx[i], ny = y + dy[i];
+                if (nx < x0 || nx > x1 || ny < y0 || ny > y1) {
+                    continue;
+                }
+                int nidx = ny * w + nx;
+                int cost = world.blockAt(nx, ny).solid() ? SOLID_COST : AIR_COST;
+                int cand = cur - cost;
+                if (cand > (arr[nidx] & 0xFF)) {
+                    arr[nidx] = (byte) cand;
+                    queue.add(nidx);
+                }
+            }
+        }
+    }
+
     /** 该格静态亮度 0~15：天光按昼强缩放后与块光取最大。 */
     public int staticLevel(int x, int y, int daylight0to15) {
         if (sky == null || x < 0 || x >= w || y < 0 || y >= h) {

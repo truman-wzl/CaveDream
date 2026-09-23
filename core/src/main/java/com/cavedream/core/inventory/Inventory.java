@@ -110,4 +110,27 @@ public final class Inventory {
         }
         return n;
     }
+
+    /** 快照：各槽物品 id（供存档）。 */
+    public int[] itemIdSnapshot() {
+        return itemIds.clone();
+    }
+
+    /** 快照：各槽数量（供存档）。 */
+    public int[] countSnapshot() {
+        return counts.clone();
+    }
+
+    /** 从存档恢复槽位（越界部分忽略）。 */
+    public void loadFrom(int[] ids, int[] cnts, int sel) {
+        java.util.Arrays.fill(itemIds, EMPTY);
+        java.util.Arrays.fill(counts, 0);
+        if (ids != null && cnts != null) {
+            for (int i = 0; i < size && i < ids.length && i < cnts.length; i++) {
+                itemIds[i] = ids[i];
+                counts[i] = ids[i] == EMPTY ? 0 : cnts[i];
+            }
+        }
+        select(sel);
+    }
 }
