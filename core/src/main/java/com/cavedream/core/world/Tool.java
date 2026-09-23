@@ -1,51 +1,67 @@
 package com.cavedream.core.world;
 
-import com.cavedream.core.item.Item;
+import com.cavedream.core.item.Material;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
- * 挖掘工具阶梯（GDD）：木→石→铁→金→白金→圣，power=挖掘力度倍率。
- * 实际耗时 = 方块基准秒 / power；木（初始）power=1.0 不缩短；圣 power=10 ⇒ 耗时=基准/10（减 90%）。
- * 每个工具绑定其 {@link Item} id，便于从背包选中格反查工具。
+ * 挖掘工具：由「工具类型 × 材质」派生（等价类建模，不再逐阶手写常量）。
+ * 实际耗时 = 方块基准秒 / power；木=初始不缩短，圣=power10 ⇒ 减 90%。
  *
- * @param name   工具名（HUD/背包）
+ * @param name   显示名
  * @param power  挖掘力度倍率（≥1）
  * @param itemId 对应物品 id（镐 100–105 / 斧 110–115）
  */
 public record Tool(String name, double power, int itemId) {
 
-    public static final Tool WOOD_PICKAXE = new Tool("木镐", 1.0, 100);
-    public static final Tool STONE_PICKAXE = new Tool("石镐", 1.5, 101);
-    public static final Tool IRON_PICKAXE = new Tool("铁镐", 2.0, 102);
-    public static final Tool GOLD_PICKAXE = new Tool("金镐", 3.0, 103);
-    public static final Tool PLATINUM_PICKAXE = new Tool("白金镐", 4.5, 104);
-    public static final Tool SAINT_PICKAXE = new Tool("圣镐", 10.0, 105);   // −90% 挖掘时间
+    /** 工具类型：决定 id 段与名称后缀。 */
+    public enum Kind {
+        PICKAXE("镐", 100), AXE("斧", 110);
+        final String suffix;
+        final int baseId;
+        Kind(String suffix, int baseId) {
+            this.suffix = suffix;
+            this.baseId = baseId;
+        }
+    }
 
-    public static final Tool WOOD_AXE = new Tool("木斧", 1.0, 110);
-    public static final Tool STONE_AXE = new Tool("石斧", 1.5, 111);
-    public static final Tool IRON_AXE = new Tool("铁斧", 2.0, 112);
-    public static final Tool GOLD_AXE = new Tool("金斧", 3.0, 113);
-    public static final Tool PLATINUM_AXE = new Tool("白金斧", 4.5, 114);
-    public static final Tool SAINT_AXE = new Tool("圣斧", 10.0, 115);
+    private static final Map<Integer, Tool> BY_ID = new HashMap<>();
 
-    /** 初始工具：木镐，不缩短任何挖掘时间（GDD：初始工具无法缩短挖掘时间）。 */
-    public static final Tool INITIAL = WOOD_PICKAXE;
+    static {
+        for (Kind k : Kind.values()) {
+            for (Material m : Material.values()) {
+                Tool t = new Tool(m.cn + k.suffix, m.power, k.baseId + m.tier());
+                BY_ID.put(t.itemId, t);
+            }
+        }
+    }
+
+    /** 工厂：某类型某材质的工具。 */
+    public static Tool of(Kind kind, Material material) {
+        return BY_ID.get(kind.baseId + material.tier());
+    }
+
+    public static Tool pickaxe(Material m) {
+        return of(Kind.PICKAXE, m);
+    }
+
+    public static Tool axe(Material m) {
+        return of(Kind.AXE, m);
+    }
+
+    /** 初始工具：木镐。 */
+    public static final Tool INITIAL = pickaxe(Material.WOOD);
+
+    /** 由物品 id 反查工具；非工具返回 null。 */
+    public static Tool byItemId(int itemId) {
+        return BY_ID.get(itemId);
+    }
 
     public Tool {
         if (power < 1.0) {
             power = 1.0;
         }
-    }
-
-    /** 由背包物品 id 反查工具（镐优先）；非工具返回 null。 */
-    public static Tool byItemId(int itemId) {
-        for (Tool t : new Tool[]{WOOD_PICKAXE, STONE_PICKAXE, IRON_PICKAXE, GOLD_PICKAXE,
-                PLATINUM_PICKAXE, SAINT_PICKAXE, WOOD_AXE, STONE_AXE, IRON_AXE, GOLD_AXE,
-                PLATINUM_AXE, SAINT_AXE}) {
-            if (t.itemId == itemId) {
-                return t;
-            }
-        }
-        return null;
     }
 
     /** 用本工具挖掘 b 的实际耗时（秒）；b 不可挖返回 -1。 */

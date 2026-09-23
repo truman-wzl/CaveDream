@@ -24,20 +24,18 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
         return kind == Kind.BLOCK && block != null && block != BlockType.AIR;
     }
 
-    /** 镐阶梅 100–105（木→圣）。 */
-    public static final Item WOOD_PICKAXE = new Item(100, "PICKAXE_WOOD", "木镐", Kind.TOOL, null);
-    public static final Item STONE_PICKAXE = new Item(101, "PICKAXE_STONE", "石镐", Kind.TOOL, null);
-    public static final Item IRON_PICKAXE = new Item(102, "PICKAXE_IRON", "铁镐", Kind.TOOL, null);
-    public static final Item GOLD_PICKAXE = new Item(103, "PICKAXE_GOLD", "金镐", Kind.TOOL, null);
-    public static final Item PLATINUM_PICKAXE = new Item(104, "PICKAXE_PLATINUM", "白金镐", Kind.TOOL, null);
-    public static final Item SAINT_PICKAXE = new Item(105, "PICKAXE_SAINT", "圣镐", Kind.TOOL, null);
-    /** 斧阶梯 110–115（木→圣）。 */
-    public static final Item WOOD_AXE = new Item(110, "AXE_WOOD", "木斧", Kind.TOOL, null);
-    public static final Item STONE_AXE = new Item(111, "AXE_STONE", "石斧", Kind.TOOL, null);
-    public static final Item IRON_AXE = new Item(112, "AXE_IRON", "铁斧", Kind.TOOL, null);
-    public static final Item GOLD_AXE = new Item(113, "AXE_GOLD", "金斧", Kind.TOOL, null);
-    public static final Item PLATINUM_AXE = new Item(114, "AXE_PLATINUM", "白金斧", Kind.TOOL, null);
-    public static final Item SAINT_AXE = new Item(115, "AXE_SAINT", "圣斧", Kind.TOOL, null);
+    /** 工具类工厂：由「类型 × 材质」派生（id 段与 Tool 一致：镐 100–105、斧 110–115）。 */
+    public static Item pickaxe(Material m) {
+        return new Item(100 + m.tier(), "PICKAXE_" + m.name(), m.cn + "镐", Kind.TOOL, null);
+    }
+
+    public static Item axe(Material m) {
+        return new Item(110 + m.tier(), "AXE_" + m.name(), m.cn + "斧", Kind.TOOL, null);
+    }
+
+    /** 便捷命名常量（均由工厂派生，非手写）。 */
+    public static final Item WOOD_PICKAXE = pickaxe(Material.WOOD);
+    public static final Item WOOD_AXE = axe(Material.WOOD);
     /** 五职业主武器 200–204（未选职业前默认用战士剑作为“职业主武器”）。 */
     public static final Item WARRIOR_SWORD = new Item(200, "WEAPON_WARRIOR", "战士主武器", Kind.WEAPON, null);
     public static final Item MAGE_WAND = new Item(201, "WEAPON_MAGE", "法师主武器", Kind.WEAPON, null);
@@ -48,9 +46,7 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
     /** 起始三件套：木镐 + 木斧 + 职业主武器（默认战士剑）。 */
     public static final Item[] STARTER_KIT = {WOOD_PICKAXE, WOOD_AXE, WARRIOR_SWORD};
 
-    private static final Item[] TOOLS_WEAPONS = {WOOD_PICKAXE, STONE_PICKAXE, IRON_PICKAXE, GOLD_PICKAXE,
-            PLATINUM_PICKAXE, SAINT_PICKAXE, WOOD_AXE, STONE_AXE, IRON_AXE, GOLD_AXE, PLATINUM_AXE, SAINT_AXE,
-            WARRIOR_SWORD, MAGE_WAND, SUMMONER_STAFF, ARCHER_BOW, ASSASSIN_DAGGER};
+    private static final Item[] WEAPONS = {WARRIOR_SWORD, MAGE_WAND, SUMMONER_STAFF, ARCHER_BOW, ASSASSIN_DAGGER};
 
     private static final Map<Integer, Item> BY_ID = new HashMap<>();
     private static final Map<String, Item> BY_KEY = new HashMap<>();
@@ -59,7 +55,11 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
         for (BlockType b : BlockType.values()) {
             register(new Item(b.id(), b.name(), b.cn(), Kind.BLOCK, b));
         }
-        for (Item it : TOOLS_WEAPONS) {
+        for (Material m : Material.values()) {   // 工具由材质派生，与 Tool 的 id 段一致
+            register(pickaxe(m));
+            register(axe(m));
+        }
+        for (Item it : WEAPONS) {
             register(it);
         }
     }

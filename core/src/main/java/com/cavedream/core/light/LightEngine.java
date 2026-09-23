@@ -15,7 +15,7 @@ public final class LightEngine {
     /** 光照最高等级（内部 0~15；对外 1~16 级）。 */
     public static final int MAX_LEVEL = 15;
     private static final int AIR_COST = 1;     // 光在空气/水中每格衰减
-    private static final int SOLID_COST = 4;   // 光穿透固体衰减更大 → 洞穴深处迅速变暗
+    private static final int SOLID_COST = 2;   // 光穿透固体衰减（过大会把地表也挡黑）
 
     private int w;
     private int h;
@@ -42,12 +42,15 @@ public final class LightEngine {
             for (int y = h - 1; y >= 0; y--) {
                 int idx = y * w + x;
                 BlockType b = world.blockAt(x, y);
-                // 天光种子：从顶部起连续的非固体（开阔天空/水面）取满亮度
-                if (open && !b.solid()) {
-                    sky[idx] = (byte) MAX_LEVEL;
-                    qSky.add(idx);
-                } else if (b.solid()) {
-                    open = false;
+                // 天光种子：从顶部往下、遇非固体（天空/水面）铺满亮度；
+                // 梦之雾是箱庭边界的实心封层，不能封住天光（否则整列 sky=0、永远黑夜）。
+                if (open) {
+                    if (!b.solid()) {
+                        sky[idx] = (byte) MAX_LEVEL;
+                        qSky.add(idx);
+                    } else if (b != BlockType.FOG) {
+                        open = false;   // 真正的地表/固体才关闭该列的天空
+                    }
                 }
                 // 块光种子：方块自发光
                 if (b.light() > 0) {

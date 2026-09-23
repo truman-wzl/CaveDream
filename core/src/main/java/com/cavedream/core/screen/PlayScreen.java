@@ -19,6 +19,7 @@ import com.cavedream.core.light.LightEngine;
 import com.cavedream.core.light.LightSource;
 import com.cavedream.core.render.BlockTextures;
 import com.cavedream.core.render.ItemCatalog;
+import com.cavedream.core.render.SkyRenderer;
 import com.cavedream.core.inventory.Inventory;
 import com.cavedream.core.item.Item;
 import com.cavedream.core.world.BlockType;
@@ -60,6 +61,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private Texture pixel;
     private BitmapFont font;
     private BlockTextures textures;
+    private SkyRenderer sky;
     private TextureRegion dreamerRegion;
     private TextureRegion blobRegion;
     private TextureRegion pickaxeRegion;
@@ -121,6 +123,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         pixel = new Texture(pm);
         pm.dispose();
         textures = new BlockTextures();
+        sky = new SkyRenderer();
         dreamerRegion = new TextureRegion(textures.dreamer());
         pickaxeRegion = new TextureRegion(textures.pickaxe());
         blobRegion = new TextureRegion(textures.cornerBlob());
@@ -181,9 +184,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         Gdx.gl.glClearColor(0.043f + 0.32f * d, 0.055f + 0.42f * d, 0.10f + 0.55f * d, 1f);   // 梦夜↔白昼底色
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
+        // 动态视差天空（屏幕空间，世界层之前）
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        sky.draw(batch, Gdx.graphics.getWidth(), Gdx.graphics.getHeight(),
+                camera.position.x, time, (float) clock.hour(), d);
+        batch.end();
+
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
-        drawBackground();
         drawVisibleTiles();
         drawMiningProgress();
         drawLighting();
@@ -203,36 +212,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         int px = (int) Math.floor(player.centerX() / TILE);
         int py = (int) Math.floor(player.centerY() / TILE);
         dynamicLights.add(new LightSource(px, py, PLAYER_GLOW_LEVEL, PLAYER_GLOW_RADIUS));
-    }
-
-    /** 卡通画布底座：格里空气按地表/深度采天空或深渊渐变。 */
-    private void drawBackground() {
-        float halfW = camera.viewportWidth / 2;
-        float halfH = camera.viewportHeight / 2;
-        int x0 = (int) Math.floor((camera.position.x - halfW) / TILE);
-        int x1 = (int) Math.ceil((camera.position.x + halfW) / TILE);
-        int y0 = (int) Math.floor((camera.position.y - halfH) / TILE);
-        int y1 = (int) Math.ceil((camera.position.y + halfH) / TILE);
-        int H = world.getHeight();
-        for (int x = Math.max(0, x0); x <= Math.min(world.getWidth() - 1, x1); x++) {
-            int sy = surfaceY[x];
-            for (int y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) {
-                if (world.blockAt(x, y) != BlockType.AIR) {
-                    continue;
-                }
-                float px = x * (float) TILE, py = y * (float) TILE;
-                if (y > sy) {
-                    double t = (y - sy) / (double) Math.max(1, H - sy);
-                    float sky = 0.34f + 0.66f * (daylight0to15 / (float) LightEngine.MAX_LEVEL); // 白天亮、夜里暗
-                    batch.setColor(sky, sky, Math.min(1f, sky + 0.06f), 1f);
-                    batch.draw(skyRows[(int) ((1 - t) * 255)], px, py, TILE, TILE);
-                    batch.setColor(1, 1, 1, 1);
-                } else {
-                    double t = Math.min(1.0, (sy - y) / 280.0);
-                    batch.draw(depthRows[(int) (t * 255)], px, py, TILE, TILE);
-                }
-            }
-        }
     }
 
     /** 梦尘：缓慢漂移的半透明光点，只在空气格里可见。 */
@@ -414,13 +393,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (oU) {
             if (b == BlockType.GRASS) {
                 batch.setColor(1, 1, 1, 1);
-                batch.draw(textures.grassLip(), px, py + TILE - 3, TILE, 8);   // 草唇凸出格线
-                if (oL) {
-                    batch.draw(textures.cornerBlob(), px - 7, py + TILE - 4, 8, 8);
-                }
-                if (oR) {
-                    batch.draw(blobRegion, px + TILE - 1, py + TILE - 4, 4, 4, 8, 8, -1, 1, 0);
-                }
+                batch.draw(textures.grassLip(), px, py + TILE - 3, TILE, 8);   // 草唇（一排草叶）
             } else {
                 float[] hl = BlockTextures.lightOf(b, 1.30);
                 fill(px, py + TILE - 2, TILE, 2, hl[0], hl[1], hl[2], 0.42f);    // 顶面高光
@@ -450,10 +423,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             batch.draw(pixel, px + TILE - 1, py, 1, TILE);
         }
         batch.setColor(1, 1, 1, 1);
-        // 6) 凸角圆角（非草块）：白色象限盘染本体色，覆盖直角 → 离开网格硬角
-        if (b != BlockType.GRASS) {
-            cornerRound(b, px, py, oU, oD, oL, oR);
-        }
+        // 凸角圆角暂不处理：旧实现在格外侧贴圆角盘→变成"耳朵"，待用"向内修圆"重做。
     }
 
     /** 不同材质边界：邻居色按列噪声“渗”入本格 1~3px，形成有机过渡而非直线切口。 */
@@ -748,5 +718,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         font.dispose();
         pixel.dispose();
         textures.dispose();
+        sky.dispose();
     }
 }
