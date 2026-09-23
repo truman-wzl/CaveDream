@@ -22,6 +22,8 @@ public final class PlayerEntity {
     private float vx;
     private float vy;
     private boolean onGround;
+    /** 面向：1 右 / -1 左（贴图默认朝右，渲染时据此镜像） */
+    private int facing = 1;
 
     public PlayerEntity(float x, float y) {
         this.x = x;
@@ -37,6 +39,11 @@ public final class PlayerEntity {
         dt = Math.min(dt, 1f / 30f);   // 防卡顿大跳穿墙
 
         vx = (right ? MOVE_SPEED : 0f) + (left ? -MOVE_SPEED : 0f);
+        if (vx > 0) {
+            facing = 1;
+        } else if (vx < 0) {
+            facing = -1;
+        }
         if (jump && onGround) {
             vy = JUMP_VELOCITY;
             onGround = false;
@@ -116,5 +123,10 @@ public final class PlayerEntity {
 
     public boolean isOnGround() {
         return onGround;
+    }
+
+    /** 当前面向：1 右 / -1 左。 */
+    public int facing() {
+        return facing;
     }
 }

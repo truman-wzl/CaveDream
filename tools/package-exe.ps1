@@ -35,6 +35,7 @@ if (Test-Path $appPath) { Remove-Item $appPath -Recurse -Force }
     --main-jar 'cavedream-1.0-SNAPSHOT.jar' `
     --main-class 'com.cavedream.desktop.Main' `
     --runtime-image $runtimeDir `
+    --icon "$root\desktop\pkg\cavedream.ico" `
     --dest $distDir `
     --java-options '-Xmx1g' `
     --java-options '-Dfile.encoding=UTF-8'

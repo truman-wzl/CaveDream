@@ -9,9 +9,11 @@ import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Disposable;
 import com.cavedream.core.CaveDreamGame;
+import com.cavedream.core.render.BlockTextures;
 import com.cavedream.core.world.BlockType;
 import com.cavedream.core.world.LayerGenerator;
 import com.cavedream.core.world.LayerWorld;
@@ -34,6 +36,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private OrthographicCamera camera;
     private Texture pixel;
     private BitmapFont font;
+    private BlockTextures textures;
+    private TextureRegion dreamerRegion;
     private BlockType holdBlock = BlockType.DIRT;
     private final Vector3 mouseWorld = new Vector3();
 
@@ -53,6 +57,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         pm.fill();
         pixel = new Texture(pm);
         pm.dispose();
+        textures = new BlockTextures();
+        dreamerRegion = new TextureRegion(textures.dreamer());
     }
 
     @Override
@@ -162,17 +168,18 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 if (b == BlockType.AIR) {
                     continue;
                 }
-                batch.setColor(b.r(), b.g(), b.b(), 1f);
-                batch.draw(pixel, x * (float) TILE, y * (float) TILE, TILE, TILE);
+                // 坐标哈希选变体，同块相邻不同版，消除网格感
+                batch.draw(textures.get(b, x * 7 + y * 13), x * (float) TILE, y * (float) TILE, TILE, TILE);
             }
         }
         batch.setColor(1, 1, 1, 1);
     }
 
     private void drawPlayer() {
-        batch.setColor(0.92f, 0.85f, 1f, 1f);   // 做梦者的轮廓色
-        batch.draw(pixel, player.x(), player.y(), player.width(), player.height());
-        batch.setColor(1, 1, 1, 1);
+        float w = player.width();
+        float h = player.height();
+        // 侧脸贴图默认朝右；朝左时绕中心镜像（scaleX = facing）
+        batch.draw(dreamerRegion, player.x(), player.y(), w / 2, h / 2, w, h, player.facing(), 1, 0);
     }
 
     private void drawCursor() {
@@ -203,5 +210,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.dispose();
         font.dispose();
         pixel.dispose();
+        textures.dispose();
     }
 }
