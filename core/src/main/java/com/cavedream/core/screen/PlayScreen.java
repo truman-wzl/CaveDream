@@ -223,7 +223,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 float px = x * (float) TILE, py = y * (float) TILE;
                 if (y > sy) {
                     double t = (y - sy) / (double) Math.max(1, H - sy);
+                    float sky = 0.34f + 0.66f * (daylight0to15 / (float) LightEngine.MAX_LEVEL); // 白天亮、夜里暗
+                    batch.setColor(sky, sky, Math.min(1f, sky + 0.06f), 1f);
                     batch.draw(skyRows[(int) ((1 - t) * 255)], px, py, TILE, TILE);
+                    batch.setColor(1, 1, 1, 1);
                 } else {
                     double t = Math.min(1.0, (sy - y) / 280.0);
                     batch.draw(depthRows[(int) (t * 255)], px, py, TILE, TILE);
@@ -247,6 +250,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 continue;
             }
             float tw = 0.10f + 0.08f * (float) Math.sin(time * 1.3 + ph);
+            tw *= 1f - 0.85f * (daylight0to15 / (float) LightEngine.MAX_LEVEL);   // 白天星星/梦尘淡出
             batch.setColor(0.72f, 0.65f, 0.88f, tw);
             batch.draw(pixel, wx, wy, 2, 2);
         }
