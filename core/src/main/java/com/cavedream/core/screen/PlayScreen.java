@@ -32,6 +32,9 @@ import com.cavedream.core.world.ItemDrop;
 import com.cavedream.core.world.LayerWorld;
 import com.cavedream.core.world.PlayerEntity;
 import com.cavedream.core.world.Tool;
+import com.cavedream.core.world.mob.Mob;
+import com.cavedream.core.world.mob.Slime;
+import com.cavedream.core.world.mob.SpawnManager;
 import com.cavedream.core.world.gen.TestBed;
 
 /**
@@ -92,8 +95,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private float sunX, sunY = 1f;                        // 指向太阳的单位向量
 
     // —— 背包 / 挖掘 / 动画 ——
-    private static final int HOTBAR = 10;                // 快捷栏格数（GDD §3.5）
-    private final Inventory inventory = new Inventory(HOTBAR);
+    private static final int HOTBAR = 10;                // 快捷栏格数（背包前 10 格，GDD §3.5）
+    private static final int INV_TOTAL = 40;             // 背包总格（含快捷栏）：GDD §3.5 初始 40
+    private final Inventory inventory = new Inventory(INV_TOTAL);
     private Tool tool = Tool.INITIAL;
     private float frameDelta;
     private int digX = -1, digY = -1;                    // 当前蓄力挖掘目标格
@@ -102,6 +106,14 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private float walkPhase;                             // 走路动画相位
     private final java.util.List<ItemDrop> drops = new java.util.ArrayList<>();
     private final java.util.List<PickupFx> pickupFx = new java.util.ArrayList<>();
+    private final SpawnManager spawner = new SpawnManager(20260923L, 12);   // 昼夜刷怪
+    private final int weaponDamage = 12;                                     // 主武器单击伤害（待武器系统细化）
+    private float invuln;                                                    // 接触伤害无敌帧
+    private float attackCd;                                                   // 攻击冷却
+    private boolean showInv;                                                  // E 开合背包
+    private static final float SWING_DUR = 0.28f;                            // 一次挥击时长（秒）
+    private float swingT;                                                     // 挥击进度 0~1
+    private boolean swinging;                                                 // 正在挥击
 
     public PlayScreen(CaveDreamGame game, PlayerClass playerClass) {
         this.game = game;
@@ -196,6 +208,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         rebuildDynamicLights();
         updateDrops(delta);
         stats.update(delta);
+        updateMobs(delta);
 
         float d = daylight0to15 / (float) LightEngine.MAX_LEVEL;   // 昼系 0~1
         Gdx.gl.glClearColor(0.043f + 0.32f * d, 0.055f + 0.42f * d, 0.10f + 0.55f * d, 1f);   // 梦夜↔白昼底色
@@ -213,6 +226,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawVisibleTiles();
         drawMiningProgress();
         drawLighting();
+        drawMobs();
         drawDrops();
         drawPlayer();
         drawPickupFx();
@@ -222,6 +236,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawHud();
         drawHotbar();
         drawStats();
+        drawInventory();
     }
 
     /** 双条 HUD（屏幕左上）：梦眠=月相图标、魔能=蓝五星；图标透明度=该格填充度（缺=透明、满=实心）。 */
@@ -294,12 +309,61 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 inventory.select(i);
             }
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.E)) {
+            showInv = !showInv;
+        }
+        if (showInv) {                       // 背包开启：只处理选格，不挖掘/放置/攻击
+            miningNow = false;
+            digProgress = 0f;
+            if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
+                int idx = invSlotAtMouse();
+                if (idx >= 0) {
+                    inventory.select(idx);
+                }
+            }
+            return;
+        }
         int[] tile = mouseTile();
+        Item held = inventory.selectedItem();
+        Tool heldTool = held == null ? null : Tool.byItemId(held.id());
+        if (held != null && held.placeable()) {
+            holdBlock = held.block();
+        }
+        if (heldTool != null) {
+            tool = heldTool;
+        }
+
+        boolean leftHeld = Gdx.input.isButtonPressed(Input.Buttons.LEFT);
+        boolean leftPressed = Gdx.input.isButtonJustPressed(Input.Buttons.LEFT);
+
+        // 使用手持物：按下即起一次挥击（任何物品可空挥，动画驱动，为后续技能/特效留接口）
+        if (leftPressed) {
+            swinging = true;
+            swingT = 0f;
+        }
+        if (swinging) {
+            swingT += frameDelta / SWING_DUR;
+            if (swingT >= 1f) {
+                swingT = 0f;
+                swinging = false;
+            }
+        }
+
+        // 攻击：挥击命中目标格上的怪（受冷却）；空挥也进冷却
+        if (leftPressed && attackCd <= 0f) {
+            Mob hit = tile != null ? mobAt(tile[0], tile[1]) : null;
+            if (hit != null) {
+                hit.damage(weaponDamage);
+            }
+            attackCd = 0.4f;
+        }
+
+        // 挖掘：仅当手持工具（镐/斧）且按住左键指向可挖方块时蓄力
         boolean mining = false;
-        if (Gdx.input.isButtonPressed(Input.Buttons.LEFT) && tile != null) {
+        if (leftHeld && tile != null && heldTool != null) {
             BlockType b = world.blockAt(tile[0], tile[1]);
-            float need = tool.digSeconds(b);
-            if (need >= 0f) {                    // 可挖：累进进度（不同工具 power 不同→需时不同）
+            float need = heldTool.digSeconds(b);
+            if (need >= 0f) {
                 if (tile[0] != digX || tile[1] != digY) {
                     digX = tile[0];
                     digY = tile[1];
@@ -326,16 +390,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             digY = -1;
         }
         miningNow = mining;
-        // 手持/工具与当前选中格同步：方块→holdBlock，工具→挖掘力度
-        Item held = inventory.selectedItem();
-        if (held != null && held.placeable()) {
-            holdBlock = held.block();
-        }
-        Tool heldTool = held == null ? null : Tool.byItemId(held.id());
-        if (heldTool != null) {
-            tool = heldTool;
-        }
-        // 右键单击放置（仅方块物品，消耗选中格 1 个）
+
+        // 右键：放置方块 / 交互
         if (Gdx.input.isButtonJustPressed(Input.Buttons.RIGHT) && tile != null
                 && held != null && held.placeable()
                 && world.blockAt(tile[0], tile[1]) == BlockType.AIR
@@ -610,12 +666,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             tilt = 0f;
         }
         // 手持镐（先画身体压在柄上更像握持）；挖掘时绕手挥动
-        float swing = miningNow ? (float) Math.sin(time * 18f) : 0f;
-        float pickAng = (facing > 0 ? -30f : 30f) + swing * 55f * (facing > 0 ? 1 : -1);
+        // 手持物挥击（任何物品左键都挥，含空挥）：swingT 驱动 0→1→0 的弧
+        float swing = swinging ? (float) Math.sin(swingT * Math.PI) : 0f;
+        float pickAng = (facing > 0 ? -30f : 30f) + swing * 80f * (facing > 0 ? 1 : -1);
         float hx = player.centerX() + facing * w * 0.5f;
         float hy = player.centerY() + bob;
         float ps = 26f;
-        batch.draw(pickaxeRegion, hx - ps / 2, hy - ps / 2, ps / 2, ps / 2, ps, ps, facing, 1, pickAng);
+        Item held = inventory.selectedItem();
+        TextureRegion hand = held != null ? itemSprite(held) : pickaxeRegion;
+        batch.draw(hand, hx - ps / 2, hy - ps / 2, ps / 2, ps / 2, ps, ps, facing, 1, pickAng);
         // 侧脸身体贴图默认朝右；scaleX=facing 镜像，tilt 为小幅旋转
         batch.draw(dreamerRegion, player.x(), player.y() + bob, w / 2, h / 2, w, h, facing, 1, tilt);
     }
@@ -679,6 +738,65 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
+    /** 刷怪推进 + 接触伤害 + 溃梦复活。 */
+    private void updateMobs(float dt) {
+        invuln = Math.max(0f, invuln - dt);
+        attackCd = Math.max(0f, attackCd - dt);
+        spawner.update(world, player.centerX(), player.centerY(), clock.isNight(), dt);
+        if (invuln <= 0f) {
+            for (Mob m : spawner.mobs()) {
+                if (m.overlapsRect(player.x(), player.y(), player.width(), player.height())) {
+                    stats.damage(m instanceof Slime ? ((Slime) m).touchDamage() : 5);
+                    invuln = 0.8f;
+                    break;
+                }
+            }
+        }
+        if (stats.isDreamBreak()) {
+            stats.reviveAtAnchor();   // 溃梦回锚点（暂不传送，M3 接床/锚点后补）
+        }
+    }
+
+    /** 目标格上的怪（供左键攻击）；无则 null。 */
+    private Mob mobAt(int tileX, int tileY) {
+        float tx = tileX * (float) TILE, ty = tileY * (float) TILE;
+        for (Mob m : spawner.mobs()) {
+            if (m.overlapsRect(tx, ty, TILE, TILE)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    /** 史莱姆：彩色身体（落地压扁/腾空拉长）+ 高光 + 眼睛 + 受伤血条。 */
+    private void drawMobs() {
+        for (Mob m : spawner.mobs()) {
+            if (!(m instanceof Slime)) {
+                continue;
+            }
+            Slime s = (Slime) m;
+            int rgb = s.rgb();
+            float r = ((rgb >> 16) & 0xFF) / 255f, g = ((rgb >> 8) & 0xFF) / 255f, b = (rgb & 0xFF) / 255f;
+            float squash = s.isOnGround() ? 1.15f : 0.85f;
+            float w = s.w() * squash, h = s.h() * (2f - squash);
+            float x = s.x() + (s.w() - w) / 2f, y = s.y();
+            batch.setColor(r, g, b, 1f);
+            batch.draw(pixel, x, y, w, h);
+            batch.setColor(Math.min(1f, r + 0.25f), Math.min(1f, g + 0.25f), Math.min(1f, b + 0.25f), 1f);
+            batch.draw(pixel, x, y + h - 3, w, 3);                       // 顶部高光
+            batch.setColor(1, 1, 1, 1);
+            batch.draw(pixel, x + w * 0.25f, y + h * 0.5f, 3, 4);        // 眼
+            batch.draw(pixel, x + w * 0.6f, y + h * 0.5f, 3, 4);
+            if (s.hp() < s.maxHp()) {                                    // 血条
+                batch.setColor(0.1f, 0.1f, 0.1f, 0.8f);
+                batch.draw(pixel, x, y + h + 3, w, 3);
+                batch.setColor(0.85f, 0.25f, 0.25f, 1f);
+                batch.draw(pixel, x, y + h + 3, w * (s.hp() / (float) s.maxHp()), 3);
+            }
+            batch.setColor(1, 1, 1, 1);
+        }
+    }
+
     /** 拾取动画：物品图标从掉落点缩飞至玩家中心。 */
     private void drawPickupFx() {
         float pcx = player.centerX(), pcy = player.centerY();
@@ -699,38 +817,116 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
-    /** 物品图标：可放置方块用其贴图，否则用镐子占位图。 */
+    /** 物品图标：可放置方块用其贴图，否则按 id 取镐/斧/职业武器图。 */
     private TextureRegion itemSprite(Item it) {
-        return it.placeable() ? tileRegion(it.block(), 0, 0) : pickaxeRegion;
+        if (it.placeable()) {
+            return tileRegion(it.block(), 0, 0);
+        }
+        Texture t = uiIcons.iconFor(it);
+        return t != null ? new TextureRegion(t) : pickaxeRegion;
     }
 
-    /** 快捷栏（屏幕左下）：逐格画选中方块图标+数量，高亮当前格，旁标工具名。 */
+    /** 背包一行的列数与单格尺寸（相对窗口）。 */
+    private static final int INV_COLS = 10;
+
+    private float invSlotSize() {
+        return uiCam.viewportHeight * 0.055f;
+    }
+
+    /** 第 i 格的 {x,y,size}（屏幕坐标，左上原点换算前的左下 y）。 */
+    private float[] invSlotRect(int i) {
+        float slot = invSlotSize(), gap = slot * 0.12f;
+        int rows = (INV_TOTAL + INV_COLS - 1) / INV_COLS;
+        float gridW = INV_COLS * slot + (INV_COLS - 1) * gap;
+        float gridH = rows * slot + (rows - 1) * gap;
+        float startX = (uiCam.viewportWidth - gridW) / 2f;
+        float topY = uiCam.viewportHeight / 2f + gridH / 2f;
+        int r = i / INV_COLS, c = i % INV_COLS;
+        float x = startX + c * (slot + gap);
+        float y = topY - (r + 1) * slot - r * gap;
+        return new float[]{x, y, slot};
+    }
+
+    /** 鼠标命中的背包格序号；无则 -1。 */
+    private int invSlotAtMouse() {
+        float mx = Gdx.input.getX(), my = uiCam.viewportHeight - Gdx.input.getY();
+        for (int i = 0; i < INV_TOTAL; i++) {
+            float[] r = invSlotRect(i);
+            if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[2]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** 背包面板（E 开合）：木质公告牌 + 18 格，前 10 为快捷栏。 */
+    private void drawInventory() {
+        if (!showInv) {
+            return;
+        }
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        float slot = invSlotSize(), gap = slot * 0.12f;
+        int rows = (INV_TOTAL + INV_COLS - 1) / INV_COLS;
+        float gridW = INV_COLS * slot + (INV_COLS - 1) * gap;
+        float gridH = rows * slot + (rows - 1) * gap;
+        float pad = slot * 0.5f;
+        WoodUi.panel(batch, pixel, (uiCam.viewportWidth - gridW) / 2f - pad,
+                uiCam.viewportHeight / 2f - gridH / 2f - pad, gridW + 2 * pad, gridH + 2 * pad);
+        for (int i = 0; i < INV_TOTAL; i++) {
+            float[] r = invSlotRect(i);
+            float x = r[0], y = r[1], s = r[2];
+            fill(x, y, s, s, 0f, 0f, 0f, 0.4f);
+            Item it = inventory.itemAt(i);
+            if (it != null) {
+                batch.setColor(1, 1, 1, 1);
+                batch.draw(itemSprite(it), x + s * 0.09f, y + s * 0.09f, s * 0.82f, s * 0.82f);
+                if (inventory.countAt(i) > 1) {
+                    font.draw(batch, String.valueOf(inventory.countAt(i)), x + s * 0.12f, y + s * 0.9f);
+                }
+            }
+            if (i == inventory.selected()) {
+                batch.setColor(1f, 1f, 0.4f, 1f);
+                batch.draw(pixel, x - 1, y - 1, s + 2, 2f);
+                batch.draw(pixel, x - 1, y + s - 1, s + 2, 2f);
+                batch.draw(pixel, x - 1, y - 1, 2f, s + 2);
+                batch.draw(pixel, x + s - 1, y - 1, 2f, s + 2);
+                batch.setColor(1, 1, 1, 1);
+            }
+        }
+        font.setColor(0.9f, 0.9f, 1f, 1f);
+        font.draw(batch, "背包（E 关闭，左键选格）", (uiCam.viewportWidth - gridW) / 2f,
+                uiCam.viewportHeight / 2f + gridH / 2f + pad);
+        font.setColor(1, 1, 1, 1);
+        batch.end();
+    }
+
+    /** 快捷栏（屏幕左下，相对尺寸）：逐格画物品图标+数量，高亮当前格，旁标工具名。 */
     private void drawHotbar() {
         batch.setProjectionMatrix(uiCam.combined);
         batch.begin();
-        int n = inventory.size();
-        float slot = 34f, gap = 4f, x0 = 14f, y0 = 14f;
+        int n = Math.min(HOTBAR, inventory.size());
+        float slot = uiCam.viewportHeight * 0.06f;      // 相对窗口高度（始终占固定比例）
+        float gap = slot * 0.12f;
+        float x0 = slot * 0.4f, y0 = slot * 0.4f;
         for (int i = 0; i < n; i++) {
             float x = x0 + i * (slot + gap);
             fill(x, y0, slot, slot, 0f, 0f, 0f, 0.42f);
             Item it = inventory.itemAt(i);
             if (it != null) {
                 batch.setColor(1, 1, 1, 1);
-                if (it.placeable()) {
-                    batch.draw(tileRegion(it.block(), 0, 0), x + 3, y0 + 3, slot - 6, slot - 6);
-                } else {
-                    batch.draw(pickaxeRegion, x + 3, y0 + 3, slot - 6, slot - 6);   // 工具/武器占位图标
-                }
+                batch.draw(itemSprite(it), x + slot * 0.09f, y0 + slot * 0.09f, slot * 0.82f, slot * 0.82f);
                 if (inventory.countAt(i) > 1) {
-                    font.draw(batch, String.valueOf(inventory.countAt(i)), x + 4, y0 + slot - 4);
+                    font.draw(batch, String.valueOf(inventory.countAt(i)), x + slot * 0.12f, y0 + slot * 0.9f);
                 }
             }
             if (i == inventory.selected()) {
                 batch.setColor(1f, 1f, 0.4f, 1f);
-                batch.draw(pixel, x - 1, y0 - 1, slot + 2, 2f);
-                batch.draw(pixel, x - 1, y0 + slot - 1, slot + 2, 2f);
-                batch.draw(pixel, x - 1, y0 - 1, 2f, slot + 2);
-                batch.draw(pixel, x + slot - 1, y0 - 1, 2f, slot + 2);
+                float b = Math.max(2f, slot * 0.06f);
+                batch.draw(pixel, x - 1, y0 - 1, slot + 2, b);
+                batch.draw(pixel, x - 1, y0 + slot - b + 1, slot + 2, b);
+                batch.draw(pixel, x - 1, y0 - 1, b, slot + 2);
+                batch.draw(pixel, x + slot - b + 1, y0 - 1, b, slot + 2);
                 batch.setColor(1, 1, 1, 1);
             }
         }

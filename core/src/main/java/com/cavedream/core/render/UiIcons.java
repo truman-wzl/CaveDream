@@ -4,6 +4,7 @@ import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.Texture.TextureFilter;
 import com.badlogic.gdx.utils.Disposable;
+import com.cavedream.core.item.Item;
 import com.cavedream.core.player.PlayerClass;
 
 import java.util.EnumMap;
@@ -20,6 +21,8 @@ public final class UiIcons implements Disposable {
     private final Map<PlayerClass, Texture> weapon = new EnumMap<>(PlayerClass.class);
     private Texture star;
     private Texture moon;
+    private Texture pickaxe;
+    private Texture axe;
 
     public UiIcons() {
         for (PlayerClass c : PlayerClass.values()) {
@@ -27,6 +30,8 @@ public final class UiIcons implements Disposable {
         }
         star = buildStar();
         moon = buildMoon();
+        pickaxe = buildPickaxe();
+        axe = buildAxe();
     }
 
     public Texture weapon(PlayerClass c) {
@@ -39,6 +44,24 @@ public final class UiIcons implements Disposable {
 
     public Texture moon() {
         return moon;
+    }
+
+    /** 按物品 id 选非方块物品图标（镐 100–105 / 斧 110–115 / 武器 200–204）；方块或未知返回 null（由调用方用块图）。 */
+    public Texture iconFor(Item it) {
+        if (it == null) {
+            return null;
+        }
+        int id = it.id();
+        if (id >= 100 && id <= 105) {
+            return pickaxe;
+        }
+        if (id >= 110 && id <= 115) {
+            return axe;
+        }
+        if (id >= 200 && id <= 204) {
+            return weapon.get(PlayerClass.values()[id - 200]);
+        }
+        return null;
     }
 
     private static Texture toTexture(Pixmap pm) {
@@ -115,6 +138,37 @@ public final class UiIcons implements Disposable {
         return toTexture(pm);
     }
 
+    private static Texture buildPickaxe() {
+        Pixmap pm = canvas();
+        int wood = 0x8A5A2B, head = 0xB8BCC6;
+        for (int i = 5; i < 20; i++) {                 // 斜柄
+            px(pm, i, i, wood, 255);
+            px(pm, i + 1, i, 0xA8703A, 255);
+        }
+        for (int x = 4; x <= 18; x++) {                // 镐头（顶部弧）
+            int y = 18 - (int) (Math.abs(x - 11) * 0.7);
+            px(pm, x, y, head, 255);
+            px(pm, x, y - 1, head, 255);
+        }
+        return toTexture(pm);
+    }
+
+    private static Texture buildAxe() {
+        Pixmap pm = canvas();
+        int wood = 0x8A5A2B, head = 0xB8BCC6;
+        for (int i = 5; i < 21; i++) {                 // 斜柄
+            px(pm, i, i, wood, 255);
+        }
+        for (int y = 12; y <= 20; y++) {               // 斧刃（左上块）
+            for (int x = 4; x <= 10; x++) {
+                if (x + (20 - y) <= 16) {
+                    px(pm, x, y, head, 255);
+                }
+            }
+        }
+        return toTexture(pm);
+    }
+
     private static void fillCircle(Pixmap pm, int cx, int cy, int r, int rgb) {
         for (int y = cy - r; y <= cy + r; y++) {
             for (int x = cx - r; x <= cx + r; x++) {
@@ -166,5 +220,7 @@ public final class UiIcons implements Disposable {
         }
         star.dispose();
         moon.dispose();
+        pickaxe.dispose();
+        axe.dispose();
     }
 }

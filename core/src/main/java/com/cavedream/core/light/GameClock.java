@@ -81,6 +81,12 @@ public final class GameClock {
         return new float[]{(float) -Math.cos(theta), (float) Math.sin(theta)};
     }
 
+    /** 是否夜间（刷怪高系数窗口）：18:30–次日 5:59。 */
+    public boolean isNight() {
+        double h = hour();
+        return h >= 18.5 || h < 6.0;
+    }
+
     /** HH:MM 文本，供 HUD。 */
     public String format() {
         return String.format("%02d:%02d", hourOfDay(), minuteOfHour());
