@@ -46,53 +46,50 @@ public class SaveController {
         return ResponseEntity.ok(Map.of("slots", slots));
     }
 
-    @GetMapping("/{slotNo}")
+    @GetMapping("/{slotKey}")
     public ResponseEntity<?> download(@RequestHeader(value = "X-Token", required = false) String token,
-                                      @PathVariable int slotNo) {
+                                      @PathVariable String slotKey) {
         Long accountId = resolve(token);
         if (accountId == null) {
             return unauthorized();
         }
-        Map<String, Object> slot = saves.findSlot(accountId, slotNo);
+        Map<String, Object> slot = saves.findSlot(accountId, slotKey);
         if (slot == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "该槽位没有梦"));
         }
-        saves.logSync(accountId, slotNo, "DOWN",
+        saves.logSync(accountId, slotKey, "DOWN",
                 slot.get("world_state_json") == null ? 0
                         : String.valueOf(slot.get("world_state_json")).getBytes(StandardCharsets.UTF_8).length);
         return ResponseEntity.ok(slot);
     }
 
-    @PutMapping("/{slotNo}")
+    @PutMapping("/{slotKey}")
     public ResponseEntity<?> upload(@RequestHeader(value = "X-Token", required = false) String token,
-                                    @PathVariable int slotNo,
+                                    @PathVariable String slotKey,
                                     @RequestBody SaveReq req) {
         Long accountId = resolve(token);
         if (accountId == null) {
             return unauthorized();
         }
-        if (slotNo < 1 || slotNo > 5) {
-            return ResponseEntity.badRequest().body(Map.of("error", "槽位号限 1~5"));
-        }
         if (req.worldStateJson() == null || req.worldStateJson().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "worldStateJson 不能为空"));
         }
-        saves.upsert(accountId, slotNo,
-                req.saveName() == null ? "dream-" + slotNo : req.saveName(),
+        saves.upsert(accountId, slotKey,
+                req.saveName() == null ? slotKey : req.saveName(),
                 req.seed(), req.gameVersion(), req.worldStateJson());
-        saves.logSync(accountId, slotNo, "UP",
+        saves.logSync(accountId, slotKey, "UP",
                 req.worldStateJson().getBytes(StandardCharsets.UTF_8).length);
-        return ResponseEntity.ok(Map.of("message", "已存入云端之梦", "slotNo", slotNo));
+        return ResponseEntity.ok(Map.of("message", "已存入云端之梦", "slotKey", slotKey));
     }
 
-    @DeleteMapping("/{slotNo}")
+    @DeleteMapping("/{slotKey}")
     public ResponseEntity<?> delete(@RequestHeader(value = "X-Token", required = false) String token,
-                                    @PathVariable int slotNo) {
+                                    @PathVariable String slotKey) {
         Long accountId = resolve(token);
         if (accountId == null) {
             return unauthorized();
         }
-        int n = saves.delete(accountId, slotNo);
+        int n = saves.delete(accountId, slotKey);
         return ResponseEntity.ok(Map.of("deleted", n));
     }
 

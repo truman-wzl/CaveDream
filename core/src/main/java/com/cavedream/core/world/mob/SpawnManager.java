@@ -21,6 +21,7 @@ public final class SpawnManager {
     private static final float DESPAWN_TILES = 56f;    // 超此距离清除
 
     private final List<Mob> mobs = new ArrayList<>();
+    private final List<Mob> killed = new ArrayList<>();   // 本帧死亡（被击杀）的怪→供上层结算掉落
     private final Random rnd;
     private final int maxMobs;
     private float spawnAcc;
@@ -40,14 +41,27 @@ public final class SpawnManager {
         return mobs;
     }
 
+    /** 取走并清空本帧被击杀的怪（上层据此掉铸梦币）。 */
+    public List<Mob> drainKilled() {
+        if (killed.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        List<Mob> out = new ArrayList<>(killed);
+        killed.clear();
+        return out;
+    }
+
     public void update(LayerWorld world, float playerCenterX, float playerCenterY, boolean isNight, float dt) {
         float t = PlayerEntity.TILE;
         for (Iterator<Mob> it = mobs.iterator(); it.hasNext(); ) {
             Mob m = it.next();
             m.update(world, playerCenterX, playerCenterY, dt);
             double dist = Math.hypot(m.centerX() - playerCenterX, m.centerY() - playerCenterY) / t;
-            if (!m.isAlive() || dist > DESPAWN_TILES) {
+            if (!m.isAlive()) {
+                killed.add(m);          // 死亡（无论近战/弹道/仆从）→集中掉币入口
                 it.remove();
+            } else if (dist > DESPAWN_TILES) {
+                it.remove();            // 超距清除≠击杀，不掉币
             }
         }
         spawnAcc += dt * BASE_RATE * coefficient(isNight);

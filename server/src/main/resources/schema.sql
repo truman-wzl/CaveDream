@@ -17,24 +17,29 @@ CREATE TABLE IF NOT EXISTS t_account (
     UNIQUE KEY uk_username (username)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '玩家账号';
 
+-- 云存档无限槽：按账号 + 字符串槽名 keying（与本地 save-*.json 一一对应）。
+-- 旧版固定 1~5 槽→直接重建（本地为权威、云端仅备份，重建无数据损失）。
+DROP TABLE IF EXISTS t_cloud_sync_log;
+DROP TABLE IF EXISTS t_save_slot;
+
 CREATE TABLE IF NOT EXISTS t_save_slot (
     id               BIGINT      NOT NULL AUTO_INCREMENT,
     account_id       BIGINT      NOT NULL,
-    slot_no          TINYINT     NOT NULL COMMENT '槽位 1~5',
+    slot_key         VARCHAR(64) NOT NULL COMMENT '云端槽名（=本地存档名，无限槽）',
     save_name        VARCHAR(64) NOT NULL,
     seed             BIGINT      NOT NULL COMMENT '存档种子（梦海确定性生成之根）',
     game_version     VARCHAR(16) NULL COMMENT '客户端版本，做存档迁移判据',
-    world_state_json JSON        NOT NULL COMMENT 'WorldState 整包快照（Jackson 序列化，结构演进不改表）',
+    world_state_json LONGTEXT    NOT NULL COMMENT '存档整包快照（libGDX Json 非严格 JSON，按原文存；服务端不解析，客户端宽松回读）',
     updated_at       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_account_slot (account_id, slot_no),
+    UNIQUE KEY uk_account_slot (account_id, slot_key),
     CONSTRAINT fk_slot_account FOREIGN KEY (account_id) REFERENCES t_account (id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '云存档槽位（本地为权威，云端为备份/跨设备）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '云存档槽位（无限槽，本地为权威，云端为备份/跨设备）';
 
 CREATE TABLE IF NOT EXISTS t_cloud_sync_log (
     id         BIGINT      NOT NULL AUTO_INCREMENT,
     account_id BIGINT      NOT NULL,
-    slot_no    TINYINT     NOT NULL,
+    slot_key   VARCHAR(64) NOT NULL,
     sync_type  VARCHAR(8)  NOT NULL COMMENT 'UP / DOWN',
     bytes      INT         NOT NULL DEFAULT 0,
     synced_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,

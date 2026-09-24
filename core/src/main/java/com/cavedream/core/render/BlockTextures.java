@@ -26,6 +26,7 @@ public final class BlockTextures implements Disposable {
     public static final int LIP_W = 16, LIP_H = 8;
     public static final int BLOB_W = 8, BLOB_H = 8;
     public static final int PICKAXE = 16;
+    public static final int COIN_SIZE = 16;
 
     /** 导出某材料 64×64 连续 sheet 的 ARGB 像素（不透明）。 */
     public static int[] bakeSheetArgb(BlockType b) {
@@ -52,6 +53,7 @@ public final class BlockTextures implements Disposable {
     private Texture depthGrad;
     private Texture blobWhite;
     private Texture pickaxe;
+    private Texture coin;
 
     public BlockTextures() {
         for (BlockType b : BlockType.values()) {
@@ -92,6 +94,10 @@ public final class BlockTextures implements Disposable {
         pickaxe = new Texture(pk);
         pickaxe.setFilter(TextureFilter.Nearest, TextureFilter.Nearest);
         pk.dispose();
+        Pixmap cn = argbPixmap(paintCoinArgb(), COIN_SIZE, COIN_SIZE);   // 透明底银币
+        coin = new Texture(cn);
+        coin.setFilter(TextureFilter.Nearest, TextureFilter.Nearest);
+        cn.dispose();
     }
 
     private static Texture linear(Pixmap pm) {
@@ -163,6 +169,32 @@ public final class BlockTextures implements Disposable {
         }
     }
 
+    /** 银色铸梦币 16×16 ARGB：圆形币面 + 暗边 + 左上高光 + 中心浮雕，透明底。 */
+    private static int[] paintCoinArgb() {
+        int[] a = new int[COIN_SIZE * COIN_SIZE];
+        for (int y = 0; y < COIN_SIZE; y++) {
+            for (int x = 0; x < COIN_SIZE; x++) {
+                double dx = x - 7.5, dy = y - 7.5;
+                double d = Math.sqrt(dx * dx + dy * dy);
+                if (d > 7) {
+                    continue;
+                }
+                int c;
+                if (d >= 5.8) {
+                    c = 0x6E7688;                       // 暗边
+                } else if (dx < -1 && dy < -1) {
+                    c = 0xF2F6FC;                       // 左上高光
+                } else if (d < 2.2) {
+                    c = 0xAEB6C4;                       // 中心浮雕
+                } else {
+                    c = 0xC3CAD6;                       // 银面
+                }
+                a[y * COIN_SIZE + x] = 0xFF000000 | (c & 0xFFFFFF);
+            }
+        }
+        return a;
+    }
+
     /** 世界坐标 (x,y) 处的连续贴图子块（跨格流动）。 */
     public TextureRegion region(BlockType b, int x, int y) {
         return regions[b.ordinal()][Math.floorMod(x, 4)][Math.floorMod(y, 4)];
@@ -215,6 +247,11 @@ public final class BlockTextures implements Disposable {
         return pickaxe;
     }
 
+    /** 手持铸梦币贴图（银色圆币）；COIN_SIZE×COIN_SIZE 透明底。 */
+    public Texture coin() {
+        return coin;
+    }
+
     @Override
     public void dispose() {
         for (Texture t : sheets) {
@@ -229,6 +266,7 @@ public final class BlockTextures implements Disposable {
         depthGrad.dispose();
         blobWhite.dispose();
         pickaxe.dispose();
+        coin.dispose();
     }
 
     /* ---------------- 连续噪声贴图（可平铺 64×64） ---------------- */
@@ -478,6 +516,62 @@ public final class BlockTextures implements Disposable {
             }
         }
         return 0;
+    }
+
+    /** 梦之主底模的默认 ARGB 网格（21×42，含描边，0=透明），供上色画板初始化。 */
+    public static int[] defaultDreamerArgb() {
+        final int skin = 0xF0D0A8, skinShade = 0xD8B088, blush = 0xE8A0A0;
+        final int hair = 0x4A3670, hairHi = 0x5D458A;
+        final int robe = 0x8E7CC3, robeD = 0x6E5DA6, robeL = 0xA99AD8;
+        final int arm = 0xA494D6, pants = 0x4A4A66, pantsD = 0x3A3A52;
+        final int shoe = 0x2E2E40, eye = 0x222233, outline = 0x1A1426;
+        int[][] grid = new int[D_H][D_W];
+        for (int y = 0; y < D_H; y++) {
+            for (int x = 0; x < D_W; x++) {
+                grid[y][x] = dreamerPixel(x, y, skin, skinShade, blush, hair, hairHi,
+                        robe, robeD, robeL, arm, pants, pantsD, shoe, eye);
+            }
+        }
+        for (int y = 0; y < D_H; y++) {
+            for (int x = 0; x < D_W; x++) {
+                if (grid[y][x] != 0 || !nearBody(grid, x, y)) {
+                    continue;
+                }
+                grid[y][x] = outline;
+            }
+        }
+        int[] argb = new int[D_W * D_H];
+        for (int y = 0; y < D_H; y++) {
+            for (int x = 0; x < D_W; x++) {
+                int c = grid[y][x];
+                argb[y * D_W + x] = c == 0 ? 0 : (0xFF000000 | (c & 0xFFFFFF));
+            }
+        }
+        return argb;
+    }
+
+    /** 梦之主底模每格的部位划分（与默认配色一致，靠颜色反查）：0背景/边、1发、2肤、3眼、4腮红、5衣袍、6臂、7裤、8鞋。 */
+    public static byte[] defaultDreamerRegions() {
+        int[] argb = defaultDreamerArgb();
+        byte[] r = new byte[argb.length];
+        for (int i = 0; i < argb.length; i++) {
+            r[i] = ((argb[i] >>> 24) & 0xFF) == 0 ? 0 : regionOf(argb[i] & 0xFFFFFF);
+        }
+        return r;
+    }
+
+    private static byte regionOf(int rgb) {
+        switch (rgb) {
+            case 0x4A3670: case 0x5D458A: return 1;               // 头发
+            case 0xF0D0A8: case 0xD8B088: return 2;               // 皮肤
+            case 0x222233: return 3;                              // 眼睛
+            case 0xE8A0A0: return 4;                              // 腮红
+            case 0x8E7CC3: case 0x6E5DA6: case 0xA99AD8: return 5; // 衣袍
+            case 0xA494D6: return 6;                              // 手臂
+            case 0x4A4A66: case 0x3A3A52: return 7;               // 裤子
+            case 0x2E2E40: return 8;                              // 鞋子
+            default: return 0;                                    // 描边/其它→不作可涂区域
+        }
     }
 
     /* ---------------- 工具 ---------------- */

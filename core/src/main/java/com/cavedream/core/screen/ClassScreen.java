@@ -66,7 +66,7 @@ public class ClassScreen extends ScreenAdapter implements Disposable {
             selected = (selected + 1) % classes.length;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.ENTER)) {
-            game.startNewDream(classes[selected]);
+            game.showPaint(classes[selected]);
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
@@ -98,7 +98,7 @@ public class ClassScreen extends ScreenAdapter implements Disposable {
         for (int i = 0; i < classes.length; i++) {
             float x = startX + i * (size + gap);
             if (mx >= x && mx <= x + size && my >= cy && my <= cy + size) {
-                game.startNewDream(classes[i]);
+                game.showPaint(classes[i]);
                 return;
             }
         }

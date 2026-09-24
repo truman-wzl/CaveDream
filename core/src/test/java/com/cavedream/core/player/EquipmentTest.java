@@ -6,27 +6,24 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 装备槽测试：武器可装、方块不可装；装备/卸下正确交换。 */
+/** 装备槽测试：当前无 ARMOR/饰品物品→武器/方块均不可装；越界卸下安全。 */
 class EquipmentTest {
 
     @Test
-    void onlyWeaponEquips() {
-        Item sword = Item.byId(200);                 // 职业武器（WEAPON）
-        assertThat(sword.kind()).isEqualTo(Item.Kind.WEAPON);
-        assertThat(Equipment.slotFor(sword)).isEqualTo(Equipment.WEAPON);
+    void nothingEquippableYet() {
+        assertThat(Equipment.slotFor(Item.byId(200))).isEqualTo(-1);      // 武器不再进装备栏
         assertThat(Equipment.slotFor(Item.ofBlock(BlockType.STONE))).isEqualTo(-1);
+        Equipment eq = new Equipment();
+        assertThat(eq.equip(Item.byId(200))).isNull();                   // 不可装→null 且不变
+        assertThat(eq.get(Equipment.PASSIVE)).isNull();
     }
 
     @Test
-    void equipSwapsOutOld() {
+    void nineSlotsAndSafeUnequip() {
         Equipment eq = new Equipment();
-        Item a = Item.byId(200);
-        Item b = Item.byId(201);
-        assertThat(eq.equip(a)).isNull();
-        assertThat(eq.get(Equipment.WEAPON)).isEqualTo(a);
-        assertThat(eq.equip(b)).isEqualTo(a);        // 返回被替换的旧武器
-        assertThat(eq.get(Equipment.WEAPON)).isEqualTo(b);
-        assertThat(eq.unequip(Equipment.WEAPON)).isEqualTo(b);
-        assertThat(eq.get(Equipment.WEAPON)).isNull();
+        assertThat(Equipment.SLOTS).isEqualTo(9);
+        assertThat(eq.unequip(Equipment.ARMOR_FIRST)).isNull();           // 空槽卸下返回 null
+        assertThat(eq.unequip(-1)).isNull();
+        assertThat(eq.unequip(99)).isNull();
     }
 }

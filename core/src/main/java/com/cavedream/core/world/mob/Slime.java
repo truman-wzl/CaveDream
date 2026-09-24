@@ -34,6 +34,8 @@ public class Slime extends Mob {
         super(x, y, W, H, MAX_HP, Math.floorMod(colorIndex, COLOR_COUNT));
         this.rnd = new Random(seed);
         this.hopTimer = 0.4f + rnd.nextFloat();
+        this.coinMin = 2;                 // 史莱姆掉 2~4 枚铸梦币（初级怪）
+        this.coinMax = 4;
     }
 
     @Override

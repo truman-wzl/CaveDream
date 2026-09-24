@@ -10,6 +10,7 @@ import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.Vector3;
@@ -21,6 +22,7 @@ import com.cavedream.core.light.GameClock;
 import com.cavedream.core.light.LightEngine;
 import com.cavedream.core.light.LightSource;
 import com.cavedream.core.render.BlockTextures;
+import com.cavedream.core.render.PaintedLook;
 import com.cavedream.core.render.ItemCatalog;
 import com.cavedream.core.render.SkyRenderer;
 import com.cavedream.core.save.GameSave;
@@ -52,7 +54,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private static final float VIEW_HEIGHT_PX = 720f;
     private static final float DEPTH_PER = 0.0085f;   // 每深一格的暗度增量
     private static final float DEPTH_MAX = 0.46f;     // 深度暗度上限（保留底部可读）
-    private static final float PICKUP_MAGNET_PX = 1.6f * TILE;   // 拾取吸附半径（px）
+    private static final float PICKUP_MAGNET_PX = 3.5f * TILE;   // 拾取吸附半径（初始 3.5 格）
     private static final float MAGNET_SPEED = 260f;             // 吸附飞行速度
 
     /** 拾取动画残影：从掉落点飞向玩家、逐渐缩小淡出。 */
@@ -78,8 +80,11 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private BlockTextures textures;
     private SkyRenderer sky;
     private TextureRegion dreamerRegion;
+    private Texture dreamerTex;                                             // 由捏脸上色生成的纹理
+    private PaintedLook appearance = new PaintedLook();                     // 可涂色外观（玩家/NPC 通用）
     private TextureRegion blobRegion;
     private TextureRegion pickaxeRegion;
+    private TextureRegion coinRegion;
     private BlockType holdBlock = BlockType.DIRT;
     private final Vector3 mouseWorld = new Vector3();
     private final float[] dust = new float[90 * 3];   // x, y, 相位
@@ -103,6 +108,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final Equipment equipment = new Equipment();                     // 装备栏（武器/护甲/饰品）
     private final java.util.List<Recipe> recipes = Recipe.starter();         // 已知配方
     private int invTab;                                                       // E 面板页：0背包 1装备 2工作区
+    private float wheelAccum;                                                 // 鼠标滚轮累计（每满 1 格切一次快捷栏）
     private Tool tool = Tool.INITIAL;
     private float frameDelta;
     private int digX = -1, digY = -1;                    // 当前蓄力挖掘目标格
@@ -145,9 +151,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private float toastT;
 
     public PlayScreen(CaveDreamGame game, PlayerClass playerClass, LayerWorld world,
-                      long seed, int spawnTileX, int spawnTileY) {
+                      long seed, int spawnTileX, int spawnTileY, PaintedLook appearance) {
         this.game = game;
         this.playerClass = playerClass;
+        this.appearance = appearance != null ? appearance : new PaintedLook();
         this.stats = new PlayerStats(playerClass);
         recomputeServantCap();   // 通灵师上限 3+成长；开局 0 只（需召唤）
         this.world = world;
@@ -180,8 +187,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         textures = new BlockTextures();
         uiIcons = new UiIcons();
         sky = new SkyRenderer();
-        dreamerRegion = new TextureRegion(textures.dreamer());
+        buildDreamer();
         pickaxeRegion = new TextureRegion(textures.pickaxe());
+        coinRegion = new TextureRegion(textures.coin());
         blobRegion = new TextureRegion(textures.cornerBlob());
         blobWhiteRegion.setRegion(new TextureRegion(textures.blobWhite()));
         for (int i = 0; i < 256; i++) {
@@ -195,6 +203,14 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     @Override
     public void show() {
+        // ScreenAdapter 不是 InputProcessor，用独立 InputAdapter 只接滚轮（其余交互靠轮询）
+        Gdx.input.setInputProcessor(new InputAdapter() {
+            @Override
+            public boolean scrolled(float amountX, float amountY) {
+                wheelAccum += amountY;   // 每格约 ±1
+                return true;
+            }
+        });
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
@@ -317,10 +333,18 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
+    /** 游戏内自动/F5 存档：只写本地主存（快、不打网络）；云端上传留到“保存并退出”（写回缓存）。 */
     private void saveNow() {
         game.saveGame(toSave());
-        toast = "已存档";
+        toast = "已存本地";
         toastT = 2f;
+    }
+
+    /** 保存并退出：写本地主存 + 同步上传云端 cache（结果回显到主菜单）。 */
+    private void saveAndUpload() {
+        GameSave s = toSave();
+        game.saveGame(s);
+        game.uploadSave(s);   // 同步上传，结果存 lastCloudMsg 供主菜单回显
     }
 
     private void drawToast() {
@@ -358,7 +382,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 if (i == 0) {
                     paused = false;
                 } else if (i == 1) {
-                    saveNow();
+                    saveAndUpload();
                     game.backToTitle();
                 } else {
                     toast = "设置开发中";
@@ -421,9 +445,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             font.draw(batch, "仆从 " + servants.size(), x + servants.size() * step + pip * 0.3f, iy - pip * 0.3f);
             font.setColor(1, 1, 1, 1);
         }
-        // 铸梦币（左上、双条下方，避开右上小地图）
+        // 铸梦币（左上、逐行下移：有仆从时让到仆从行下方，不重叠）
         font.setColor(1f, 0.9f, 0.4f, 1f);
-        font.draw(batch, "铸梦币 " + coins, x, top - step * 3.4f);
+        font.draw(batch, "铸梦币 " + coins, x, top - step * (servants.isEmpty() ? 2.9f : 4.3f));
         // 操作提示（底部居中）
         font.setColor(0.8f, 0.82f, 0.9f, 0.9f);
         font.draw(batch, "E 背包・Q 小地图・F5 存档・左键使用/点快捷栏选格・右键放置",
@@ -494,6 +518,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 inventory.select(i);
             }
         }
+        // 滚轮快速切换快捷栏（循环，仅前 HOTBAR 格）：换工具/武器超方便
+        int hcnt = Math.min(HOTBAR, inventory.size());
+        while (wheelAccum >= 1f) {
+            inventory.select((inventory.selected() + 1) % hcnt);
+            wheelAccum -= 1f;
+        }
+        while (wheelAccum <= -1f) {
+            inventory.select((inventory.selected() - 1 + hcnt) % hcnt);
+            wheelAccum += 1f;
+        }
         if (Gdx.input.isKeyJustPressed(Input.Keys.E)) {
             showInv = !showInv;
         }
@@ -548,11 +582,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
         // 使用手持物：冷却就绪且（点按或按住且上一挥已结束）→起新一轮挥击；伤害在“命中帧”结算（与动画同步）
         if ((leftPressed || (leftHeld && !swing.isActive())) && attackCd <= 0f) {
+            faceTowardMouse();                                              // 起手即朝鼠标转身
             swing.restart();
             swingHit = false;
             attackCd = attackCooldown(held);
         }
         swing.update(frameDelta);
+        if (swing.isActive()) {
+            faceTowardMouse();                                              // 武器在动→持续跟随鼠标朝向
+        }
         if (!swingHit && swing.isActive() && swing.progress() >= 0.5f) {
             applyAttack(held);                                                 // 挥到一半（刃到位）才判定
             swingHit = true;
@@ -696,7 +734,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (oU) {
             if (b == BlockType.GRASS) {
                 batch.setColor(1, 1, 1, 1);
-                batch.draw(textures.grassLip(), px, py + TILE - 3, TILE, 8);   // 草唇（一排草叶）
+                batch.draw(textures.grassLip(), px, py + TILE - 8, TILE, 8);   // 草唇顶边对齐格顶、向下垂入→贴合地表不外探
             } else {
                 float[] hl = BlockTextures.lightOf(b, 1.30);
                 fill(px, py + TILE - 2, TILE, 2, hl[0], hl[1], hl[2], 0.42f);    // 顶面高光
@@ -865,13 +903,24 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         } else {
             tilt = 0f;
         }
-        // 手持武器：长度≈身高，从头顶后方向前勈砍（绕握点旋转，easeOut 加速下砍）
+        // 手持物：按类型定尺寸与握姿（武器大、工具中、方块为小立方抱于胸前），配合走路持手轻晃与挥砍弧
         Item held = inventory.selectedItem();
+        Item.Kind hk = held == null ? Item.Kind.TOOL : held.kind();
+        float ps, rest, gy, gripF;
+        if (hk == Item.Kind.WEAPON) {
+            ps = h * 0.92f; rest = 22f; gy = player.centerY() + h * 0.18f; gripF = 0.5f;
+        } else if (hk == Item.Kind.BLOCK) {
+            ps = h * 0.44f; rest = -12f; gy = player.centerY() + h * 0.02f; gripF = 0.42f;   // 小立方靠胸前
+        } else {
+            ps = h * 0.62f; rest = 26f; gy = player.centerY() + h * 0.12f; gripF = 0.5f;
+        }
         TextureRegion hand = held != null ? itemSprite(held) : pickaxeRegion;
-        float ps = h * 1.0f;
-        float gx = player.centerX() + facing * w * 0.42f;              // 握点（手）
-        float gy = player.centerY() + bob + h * 0.15f;
-        float rot = swing.angle(20f, facing);                          // 基础挥砍弧（头顶→身前下）
+        float sway = walking ? (float) Math.sin(walkPhase * 2f) : 0f;        // 持手随步轻晃
+        gy += bob + sway * 0.8f;
+        float rot = hk == Item.Kind.BLOCK
+                ? rest + sway * 3f                                            // 方块只随步微晃、不挥砍
+                : swing.angle(rest, facing);                                 // 武器/工具：静止握持角 + 头顶→身前下挥砍弧
+        float gx = player.centerX() + facing * w * gripF;
         batch.draw(hand, gx - ps / 2f, gy, ps / 2f, 0f, ps, ps, facing, 1f, rot);
         // 侧脸身体贴图默认朝右；scaleX=facing 镜像，tilt 为小幅旋转（身体盖在握柄上→更像手持）
         if (stats.isInvulnerable()) {                        // 受击无敌帧→闪白
@@ -904,6 +953,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 tileY * (float) TILE + 2f, it, 1));
     }
 
+    /** 击杀掉银色铸梦币（数量由怪物自身 rollCoins 决定，随种类而变）。 */
+    private void spawnCoinDrop(Mob m) {
+        drops.add(new ItemDrop(m.centerX() - ItemDrop.SIZE / 2f, m.centerY() - ItemDrop.SIZE / 2f,
+                Item.COIN, m.rollCoins()));
+    }
+
     /** 掉落物物理 + 吸附 + 拾取（入包才消失，背包满则留地）。 */
     private void updateDrops(float dt) {
         float pcx = player.centerX(), pcy = player.centerY();
@@ -914,11 +969,18 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 d.seek(pcx, pcy, MAGNET_SPEED);
             }
             d.update(world, dt);
-            if (d.overlapsRect(player.x(), player.y(), player.width(), player.height())
-                    && inventory.add(d.item(), d.count())) {
-                pickupFx.add(new PickupFx(d.centerX(), d.centerY(), d.item()));
-                drops.remove(i);
-                continue;
+            if (d.overlapsRect(player.x(), player.y(), player.width(), player.height())) {
+                if (d.item().kind() == Item.Kind.COIN) {   // 铸梦币→直接入账，不占背包
+                    coins += d.count();
+                    pickupFx.add(new PickupFx(d.centerX(), d.centerY(), d.item()));
+                    drops.remove(i);
+                    continue;
+                }
+                if (inventory.add(d.item(), d.count())) {
+                    pickupFx.add(new PickupFx(d.centerX(), d.centerY(), d.item()));
+                    drops.remove(i);
+                    continue;
+                }
             }
             if (d.age() > 300f) {
                 drops.remove(i);
@@ -1009,6 +1071,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return 0.3f;
     }
 
+    /** 按鼠标世界坐标与角色的左右相对位置自动转身（鼠标在左→朝左，在右→朝右）。 */
+    private void faceTowardMouse() {
+        mouseWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0);
+        camera.unproject(mouseWorld);
+        player.setFacing(mouseWorld.x >= player.centerX() ? 1 : -1);
+    }
+
     /** 胛准单位向量（玩家中心→鼠标世界坐标）。 */
     private float[] aimVec() {
         mouseWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0);
@@ -1047,9 +1116,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             float dx = m.centerX() - pcx, dy = m.centerY() - pcy;
             if (Math.hypot(dx, dy) <= reach && dx * f > -4
                     && losClear(pcx, pcy, m.centerX(), m.centerY())) {
-                if (m.hurt(dmg, dx >= 0 ? 1f : -1f)) {
-                    coins += 1 + (int) (Math.random() * 4);
-                }
+                m.hurt(dmg, dx >= 0 ? 1f : -1f);        // 掉币统一由 updateMobs 的 drainKilled 结算
             }
         }
         slashT = 0.18f;
@@ -1109,9 +1176,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
             for (Mob m : spawner.mobs()) {
                 if (m.isAlive() && p.hitsRect(m.x(), m.y(), m.w(), m.h())) {
-                    if (m.hurt(p.dmg, p.vx >= 0 ? 1f : -1f)) {
-                        coins += 1 + (int) (Math.random() * 4);
-                    }
+                    m.hurt(p.dmg, p.vx >= 0 ? 1f : -1f);   // 掉币统一由 drainKilled 结算
                     it.remove();
                     break;
                 }
@@ -1164,6 +1229,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private void updateMobs(float dt) {
         attackCd = Math.max(0f, attackCd - dt);
         spawner.update(world, player.centerX(), player.centerY(), clock.isNight(), dt);
+        for (Mob m : spawner.drainKilled()) {          // 任何来源击杀→集中掉 2~4 枚铸梦币
+            spawnCoinDrop(m);
+        }
         for (Mob m : spawner.mobs()) {                       // 接触伤害：stats.hurt 自带无敌帧（防灌伤）
             if (m.overlapsRect(player.x(), player.y(), player.width(), player.height())) {
                 stats.hurt(m instanceof Slime ? ((Slime) m).touchDamage() : 5);
@@ -1252,6 +1320,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     /** 物品图标：可放置方块用其贴图，否则按 id 取镐/斧/职业武器图。 */
     private TextureRegion itemSprite(Item it) {
+        if (it.kind() == Item.Kind.COIN) {
+            return coinRegion;
+        }
         if (it.placeable()) {
             return tileRegion(it.block(), 0, 0);
         }
@@ -1300,11 +1371,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         float gridW = INV_COLS * slot + (INV_COLS - 1) * gap;
         float gridH = rows * slot + (rows - 1) * gap;
         float pad = slot * 0.5f;
+        // 装备页竖向分组更高：3 组标题 + 9 格（天赋/技能、盔甲4、饰品3）
+        float headH = slot * 0.85f;
+        float equipH = 3 * (headH + gap) + 9 * (slot + gap);
+        float contentH = invTab == 2 ? Math.max(gridH, equipH) : gridH;
         float panelW = sideW + gap + gridW + 2 * pad;
-        float panelH = gridH + 2 * pad;
+        float panelH = contentH + 2 * pad;
         float px = (uiCam.viewportWidth - panelW) / 2f, py = (uiCam.viewportHeight - panelH) / 2f;
         float cx0 = px + sideW + gap + pad, cy0 = py + panelH - pad;
-        return new float[]{slot, gap, sideW, gridW, gridH, panelW, panelH, px, py, cx0, cy0, pad};
+        return new float[]{slot, gap, sideW, gridW, contentH, panelW, panelH, px, py, cx0, cy0, pad};
     }
 
     private float[] bagSlotRect(int i, float[] L) {
@@ -1320,64 +1395,101 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
-    /** 装备页：武器1 + 护甲4 + 饰品3。 */
-    private void equipSlotRect(int i, float[] L, float[] out) {
-        float slot = L[0], gap = L[1], cx0 = L[9], cy0 = L[10];
-        // 行0：武器(居中偏左)；行1：护甲4；行2：饰品3
-        int row, col, cols;
-        if (i == Equipment.WEAPON) { row = 0; col = 0; cols = 1; }
-        else if (i < Equipment.ACC_FIRST) { row = 1; col = i - Equipment.ARMOR_FIRST; cols = 4; }
-        else { row = 2; col = i - Equipment.ACC_FIRST; cols = 3; }
-        float x = cx0 + col * (slot + gap) + (cols == 1 ? 0 : 0);
-        float y = cy0 - (row + 1) * slot - row * gap;
-        out[0] = x; out[1] = y; out[2] = slot;
-    }
-
-    private void drawEquipTab(float[] L) {
-        float[] r = new float[3];
-        String[] names = {"武器", "头盔", "战甲", "护腿", "战靴", "饰1", "饰2", "饰3"};
-        for (int i = 0; i < Equipment.SLOTS; i++) {
-            equipSlotRect(i, L, r);
-            drawSlot(r[0], r[1], r[2], equipment.get(i), 1, false);
-            font.setColor(0.7f, 0.72f, 0.85f, 1f);
-            font.draw(batch, names[i], r[0] + 2, r[1] - 4);
-            font.setColor(Color.WHITE);
+    /** 装备页布局：竖向三组（职业/盔甲/饰品），每组标题 + 格子堆叠。cells=9 格矩形，heads=3 标题底 y。 */
+    private void equipLayout(float[] L, float[][] cells, float[] heads) {
+        float slot = L[0], gap = L[1], cx0 = L[9];
+        float cellX = cx0 + (L[3] - slot) / 2f;                 // 单列居中于内容区
+        float headH = slot * 0.85f;
+        float y = L[10];
+        int i = 0;
+        int[] cnt = {2, 4, 3};
+        for (int g = 0; g < 3; g++) {
+            y -= headH; heads[g] = y; y -= gap;                 // 组标题（占 headH，heads[g]=其底）
+            for (int k = 0; k < cnt[g]; k++) {
+                cells[i][0] = cellX; cells[i][1] = y - slot; cells[i][2] = slot;
+                y -= slot + gap; i++;
+            }
         }
     }
 
-    /** 合成页：已解锁配方，可合成亮、缺料暗。 */
+    private void drawEquipTab(float[] L) {
+        float[][] cells = new float[Equipment.SLOTS][3];
+        float[] heads = new float[3];
+        equipLayout(L, cells, heads);
+        String[] groupTitle = {"职业", "盔甲", "饰品"};
+        int[] counts = {2, 4, 3};
+        float slot = L[0], headH = slot * 0.85f;
+        int idx = 0;
+        for (int g = 0; g < 3; g++) {
+            font.setColor(1f, 0.9f, 0.55f, 1f);                 // 组标题（暖金色，在格子外）
+            font.draw(batch, groupTitle[g], cells[idx][0], heads[g] + headH * 0.3f);
+            font.setColor(Color.WHITE);
+            for (int k = 0; k < counts[g]; k++, idx++) {         // 格内不放汉字
+                drawSlot(cells[idx][0], cells[idx][1], cells[idx][2], equipment.get(idx), 1, false);
+            }
+        }
+    }
+
+    /** 合成页：每格仅产物图标（一行一格），悬停弹详情。 */
     private float[] craftRowRect(int i, float[] L) {
         float slot = L[0], gap = L[1], cx0 = L[9], cy0 = L[10];
-        float rowH = slot * 1.2f;
-        float w = L[3];
-        return new float[]{cx0, cy0 - (i + 1) * (rowH + gap) + gap, w, rowH};
+        return new float[]{cx0, cy0 - (i + 1) * (slot + gap), slot, slot};
     }
 
     private void drawCraftTab(float[] L) {
         int shown = 0;
+        float mx = uiMouseX(), my = uiMouseY();
+        Recipe hover = null;
         for (Recipe rec : recipes) {
             if (!rec.unlocked) {
                 continue;
             }
             float[] r = craftRowRect(shown, L);
             boolean ok = rec.canCraft(inventory);
-            WoodUi.plank(batch, pixel, r[0], r[1], r[2], r[3], ok);
+            boolean over = mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[3];
+            WoodUi.plank(batch, pixel, r[0], r[1], r[2], r[3], ok || over);
             batch.setColor(1, 1, 1, ok ? 1f : 0.4f);
-            batch.draw(itemSprite(rec.out), r[0] + 6, r[1] + 6, r[3] - 12, r[3] - 12);
-            font.setColor(ok ? Color.WHITE : new Color(0.6f, 0.6f, 0.6f, 1f));
-            StringBuilder sb = new StringBuilder(rec.out.cn()).append("  ←  ");
-            for (int k = 0; k < rec.inIds.length; k++) {
-                Item in = Item.byId(rec.inIds[k]);
-                int have = inventory.countOf(in);
-                sb.append(in.cn()).append(" ").append(have).append("/").append(rec.inCounts[k]);
-                if (k < rec.inIds.length - 1) {
-                    sb.append("  ");
-                }
+            batch.draw(itemSprite(rec.out), r[0] + r[2] * 0.1f, r[1] + r[3] * 0.1f, r[2] * 0.8f, r[3] * 0.8f);
+            batch.setColor(1, 1, 1, 1);
+            if (over) {
+                hover = rec;
             }
-            font.draw(batch, sb, r[0] + r[3] + 10, r[1] + r[3] / 2f + 6f);
-            font.setColor(Color.WHITE);
             shown++;
         }
+        if (hover != null) {
+            drawCraftTooltip(hover, mx, my);
+        }
+    }
+
+    /** 合成详情浮窗：产物名 + 逐材料“持有/需求”（够=绿、缺=红），靠近鼠标、不越屏。 */
+    private void drawCraftTooltip(Recipe rec, float mx, float my) {
+        float slot = uiCam.viewportHeight * 0.032f;
+        float pad = slot * 0.6f, lineH = slot * 1.35f;
+        float w = slot * 9f;
+        float h = lineH * (rec.inIds.length + 1) + pad * 2f;
+        float bx = mx + slot * 0.8f, by = my + lineH;          // 默认右上浮动
+        if (bx + w > uiCam.viewportWidth) {
+            bx = mx - w - slot * 0.8f;
+        }
+        if (by > uiCam.viewportHeight) {
+            by = uiCam.viewportHeight;
+        }
+        if (by - h < 0) {
+            by = h;
+        }
+        WoodUi.panel(batch, pixel, bx, by - h, w, h);
+        float ty = by - pad - lineH * 0.7f;
+        font.setColor(Color.WHITE);
+        font.draw(batch, rec.out.cn(), bx + pad, ty);
+        for (int k = 0; k < rec.inIds.length; k++) {
+            Item in = Item.byId(rec.inIds[k]);
+            int have = inventory.countOf(in);
+            ty -= lineH;
+            font.setColor(have >= rec.inCounts[k]
+                    ? new Color(0.7f, 1f, 0.7f, 1f) : new Color(1f, 0.55f, 0.5f, 1f));
+            font.draw(batch, in.cn() + "  " + have + "/" + rec.inCounts[k], bx + pad, ty);
+        }
+        font.setColor(Color.WHITE);
     }
 
     /** 画一个通用物品格（图标+数量+选中框）。 */
@@ -1440,25 +1552,17 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (invTab == 0) {
             int idx = invSlotAtMouse();
             if (idx >= 0) {
-                Item it = inventory.itemAt(idx);
-                if (it != null && Equipment.slotFor(it) >= 0) {
-                    Item old = equipment.equip(it);
-                    inventory.remove(it, 1);
-                    if (old != null) {
-                        inventory.add(old, 1);
-                    }
-                } else {
-                    inventory.select(idx);
-                }
+                inventory.select(idx);                          // 背包只选格（武器不再装备到栏→即手持）
             }
         } else if (invTab == 2) {
-            float[] r = new float[3];
+            float[][] cells = new float[Equipment.SLOTS][3];
+            equipLayout(L, cells, new float[3]);
             for (int i = 0; i < Equipment.SLOTS; i++) {
-                equipSlotRect(i, L, r);
-                if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[2]) {
-                    Item got = equipment.unequip(i);
+                if (mx >= cells[i][0] && mx <= cells[i][0] + cells[i][2]
+                        && my >= cells[i][1] && my <= cells[i][1] + cells[i][2]) {
+                    Item got = equipment.unequip(i);            // 有护甲/饰品物品后可卸回（现皆空→无操作）
                     if (got != null && !inventory.add(got, 1)) {
-                        equipment.equip(got);   // 背包满→放回
+                        equipment.equip(got);
                     }
                     return;
                 }
@@ -1649,20 +1753,25 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     }
 
     private void drawHud() {
-        batch.setProjectionMatrix(camera.combined);
+        BitmapFont sf = CjkFonts.get(11);          // 小字，不占视野
+        batch.setProjectionMatrix(uiCam.combined);
         batch.begin();
-        int px = (int) Math.floor(player.centerX() / TILE);
-        int py = (int) Math.floor(player.centerY() / TILE);
-        font.setColor(0.85f, 0.88f, 1f, 1f);
-        font.draw(batch,
-                "L1 浅梦 · 时刻 " + clock.format() + " · 天光 " + clock.skyLevel1to16()
-                        + "/16 · 我处亮度 " + (lightLevelAt(px, py) + 1)
-                        + " · 帧率 " + Gdx.graphics.getFramesPerSecond()
-                        + " · 手持：" + holdBlock.cn()
-                        + " · A/D 移动  W 跳跃  左键挖掘  右键放置  ESC 返回标题",
-                camera.position.x - camera.viewportWidth / 2 + 12,
-                camera.position.y + camera.viewportHeight / 2 - 16);
-        font.setColor(1, 1, 1, 1);
+        String[] lines = {
+                "L1 浅梦",
+                "时刻 " + clock.format(),
+                "天光 " + clock.skyLevel1to16() + "/16",
+                "帧率 " + Gdx.graphics.getFramesPerSecond(),
+        };
+        float lineH = uiCam.viewportHeight * 0.026f;
+        float margin = uiCam.viewportHeight * 0.02f;
+        float right = uiCam.viewportWidth - margin;               // 右边缘对齐
+        float y = uiCam.viewportHeight / 2f + lines.length * lineH / 2f;   // 竖向居中
+        sf.setColor(0.85f, 0.88f, 1f, 0.7f);
+        for (String ln : lines) {
+            y -= lineH;
+            sf.draw(batch, ln, right - new GlyphLayout(sf, ln).width, y);
+        }
+        sf.setColor(1, 1, 1, 1);
         batch.end();
     }
 
@@ -1697,6 +1806,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         s.clockMinutes = clock.totalMinutes();
         s.coins = coins;
         s.servantCap = servantCap;
+        s.faceTemplateId = appearance.templateId;
+        s.faceColors = appearance.colors.clone();
         return s;
     }
 
@@ -1724,7 +1835,41 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             servantCap = s.servantCap;   // 存上限；仆从不存，重进需重新召唤
         }
         servants.clear();
+        if (s.faceColors != null && s.faceColors.length == PaintedLook.W * PaintedLook.H) {
+            appearance = new PaintedLook(s.faceTemplateId, s.faceColors);
+            buildDreamer();                     // 读档按存档的上色重建外观纹理
+        }
         lightDirty = true;
+    }
+
+    /** 由捏脸上色数组生成/重建小人纹理（读档或切换外观后调用）。 */
+    private void buildDreamer() {
+        Pixmap pm = lookPixmap(appearance.colors);
+        Texture t = new Texture(pm);
+        t.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
+        pm.dispose();
+        if (dreamerTex != null) {
+            dreamerTex.dispose();
+        }
+        dreamerTex = t;
+        dreamerRegion = new TextureRegion(t);
+    }
+
+    private static Pixmap lookPixmap(int[] colors) {
+        Pixmap pm = new Pixmap(PaintedLook.W, PaintedLook.H, Pixmap.Format.RGBA8888);
+        pm.setBlending(Pixmap.Blending.None);
+        pm.setColor(0, 0, 0, 0);
+        pm.fill();
+        for (int i = 0; i < colors.length; i++) {
+            int v = colors[i];
+            if ((v & 0xFFFFFF) == 0) {          // 纯黑=透明键→不画（抠图，黑区删除）
+                continue;
+            }
+            pm.setColor(((v >> 16) & 0xFF) / 255f, ((v >> 8) & 0xFF) / 255f, (v & 0xFF) / 255f,
+                    ((v >>> 24) & 0xFF) / 255f);
+            pm.drawPixel(i % PaintedLook.W, i / PaintedLook.W);
+        }
+        return pm;
     }
 
     @Override
@@ -1734,5 +1879,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         textures.dispose();
         uiIcons.dispose();
         sky.dispose();
+        if (dreamerTex != null) {
+            dreamerTex.dispose();
+        }
     }
 }

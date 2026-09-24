@@ -18,7 +18,7 @@ import java.util.Map;
  */
 public record Item(int id, String key, String cn, Kind kind, BlockType block) {
 
-    public enum Kind { BLOCK, TOOL, WEAPON }
+    public enum Kind { BLOCK, TOOL, WEAPON, COIN }
 
     public boolean placeable() {
         return kind == Kind.BLOCK && block != null && block != BlockType.AIR;
@@ -42,6 +42,8 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
     public static final Item SUMMONER_STAFF = new Item(202, "WEAPON_SUMMONER", "通灵者主武器", Kind.WEAPON, null);
     public static final Item ARCHER_BOW = new Item(203, "WEAPON_ARCHER", "射手主武器", Kind.WEAPON, null);
     public static final Item ASSASSIN_DAGGER = new Item(204, "WEAPON_ASSASSIN", "刺客主武器", Kind.WEAPON, null);
+    /** 铸梦币（硬通货，拾取即入账、不占背包格）；id 段 400。 */
+    public static final Item COIN = new Item(400, "COIN", "铸梦币", Kind.COIN, null);
 
     /** 起始三件套：木镐 + 木斧 + 职业主武器（默认战士剑）。 */
     public static final Item[] STARTER_KIT = {WOOD_PICKAXE, WOOD_AXE, WARRIOR_SWORD};
@@ -62,6 +64,7 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
         for (Item it : WEAPONS) {
             register(it);
         }
+        register(COIN);
     }
 
     private static void register(Item it) {

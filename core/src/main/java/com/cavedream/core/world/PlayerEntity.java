@@ -159,4 +159,9 @@ public final class PlayerEntity {
     public int facing() {
         return facing;
     }
+
+    /** 设定面向（非负=右、负=左）；挥武器时按鼠标与角色相对方位自动转身。 */
+    public void setFacing(int f) {
+        facing = f >= 0 ? 1 : -1;
+    }
 }

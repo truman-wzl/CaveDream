@@ -28,6 +28,8 @@ public abstract class Mob {
     protected boolean alive = true;
     protected float invulnT;                                                  // 受击无敌帧计时（防灌伤）
     private static final float IFRAME = 0.5f;                                 // 无敌帧时长（秒）
+    protected int coinMin = 1;                                                // 死亡掉落铸梦币下限（子类按强度设定）
+    protected int coinMax = 3;                                                // 上限
 
     protected Mob(float x, float y, float w, float h, int maxHp, int colorIndex) {
         this.x = x;
@@ -74,6 +76,11 @@ public abstract class Mob {
 
     /** 敌怪类型 id（“一切皆 ID”）：史莱姆=1000，后续怪顺延。 */
     public abstract int typeId();
+
+    /** 本怪一次死亡掉落的铸梦币数（coinMin~coinMax 随机，随怪物类型而变）。 */
+    public int rollCoins() {
+        return coinMin + (int) (Math.random() * (coinMax - coinMin + 1));
+    }
 
     private boolean overlapsSolid(LayerWorld world) {
         int t = PlayerEntity.TILE;

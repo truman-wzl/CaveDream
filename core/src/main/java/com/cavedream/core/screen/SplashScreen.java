@@ -76,7 +76,7 @@ public class SplashScreen extends ScreenAdapter implements Disposable {
         String word = "CaveDream";
         measure.setText(font, word);
         float x = cam.viewportWidth / 2f - measure.width / 2f;
-        float y = cam.viewportHeight / 2f - measure.height / 2f + rise;
+        float y = cam.viewportHeight * 0.62f - measure.height / 2f + rise;   // 居中靠上
         // 青色辉光（四周多遍叠）→ 凸显品牌
         font.setColor(new Color(0.4f, 0.7f, 1f, alpha * 0.4f));
         for (int o = 2; o <= 6; o += 2) {

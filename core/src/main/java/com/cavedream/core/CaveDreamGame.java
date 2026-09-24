@@ -4,12 +4,15 @@ import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.files.FileHandle;
+import com.cavedream.core.net.CloudSaveClient;
 import com.cavedream.core.net.ServerConfig;
 import com.cavedream.core.player.PlayerClass;
 import com.cavedream.core.render.ItemCatalog;
+import com.cavedream.core.render.PaintedLook;
 import com.cavedream.core.save.GameSave;
 import com.cavedream.core.screen.ClassScreen;
 import com.cavedream.core.screen.LoadingScreen;
+import com.cavedream.core.screen.PaintStudioScreen;
 import com.cavedream.core.screen.SaveListScreen;
 import com.cavedream.core.screen.SplashScreen;
 import com.cavedream.core.screen.TitleScreen;
@@ -22,10 +25,18 @@ public class CaveDreamGame extends Game {
 
     private boolean fullscreen = false;   // 默认窗口化启动（与 Main 一致）；F11 首次按下切全屏
 
+    /** 云存档：会话 token（登录写入 session.json、重启自动读回）+ 版本 + 客户端。 */
+    public static final String GAME_VERSION = "0.49";
+    private String sessionToken;
+    private String sessionNick;
+    private volatile String lastCloudMsg;                                 // 上次云存档结果（主菜单回显）
+    private final CloudSaveClient cloudSaves = new CloudSaveClient(ServerConfig.BASE_URL);
+
     @Override
     public void create() {
         Gdx.app.log("CaveDream", "登录界面已就位");
         ItemCatalog.startAsync(ServerConfig.BASE_URL);   // 后台拉取 DB 物品图集，就绪前渲染回退程序生成
+        loadSession();                                   // 读回上次登录的 token（供云存档）
         setScreen(new SplashScreen(this));   // 开场字标淡入淡出 → 主菜单
     }
 
@@ -64,9 +75,14 @@ public class CaveDreamGame extends Game {
         setScreen(new ClassScreen(this));
     }
 
-    /** 选定职业后→生成加载屏（后台生成中世界，完成进 PlayScreen）；分配一个全新存档槽。 */
-    public void startNewDream(PlayerClass playerClass) {
-        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot()));
+    /** 选定职业后→进入捏脸画板（上色）。 */
+    public void showPaint(PlayerClass playerClass) {
+        setScreen(new PaintStudioScreen(this, playerClass));
+    }
+
+    /** 捏脸完成→生成加载屏（后台生成中世界，完成进 PlayScreen）；分配一个全新存档槽。 */
+    public void startNewDream(PlayerClass playerClass, PaintedLook appearance) {
+        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance));
     }
 
     private static long freshSeed() {
@@ -129,6 +145,109 @@ public class CaveDreamGame extends Game {
         Gdx.app.log("CaveDream", "已存档 → " + f.name());
     }
 
+    /** 删除某槽位的本地存档（存档列表里删档；“一切皆文件”的本地 CRUD-Delete）。 */
+    public void deleteSave(String slot) {
+        if (slot == null || slot.isEmpty()) {
+            return;
+        }
+        saveFile(slot).delete();
+        Gdx.app.log("CaveDream", "已删除存档 " + slot);
+    }
+
+    /* ---------------- 云存档（本地权威 + 云端备份，登录后可用） ---------------- */
+
+    /** 登录成功写入会话（存 session.json + 内存，供 PlayScreen 云存档用）。 */
+    public void setSession(String token, String nickname) {
+        this.sessionToken = token;
+        this.sessionNick = nickname;
+        try {
+            Gdx.files.external("cavedream/session.json")
+                    .writeString("{\"token\":\"" + token + "\",\"nickname\":\"" + nickname + "\"}", false);
+        } catch (Exception ignore) {
+            // 写会话失败不影响本地游戏
+        }
+    }
+
+    public String sessionToken() {
+        return sessionToken;
+    }
+
+    public String sessionNick() {
+        return sessionNick;
+    }
+
+    private void loadSession() {
+        try {
+            FileHandle fh = Gdx.files.external("cavedream/session.json");
+            if (fh.exists()) {
+                String body = fh.readString();
+                sessionToken = between(body, "\"token\":\"");
+                sessionNick = between(body, "\"nickname\":\"");
+            }
+        } catch (Exception ignore) {
+            // 会话损坏当作未登录
+        }
+    }
+
+    private static String between(String s, String key) {
+        int a = s.indexOf(key);
+        if (a < 0) {
+            return null;
+        }
+        int start = a + key.length();
+        int end = s.indexOf('"', start);
+        return end > start ? s.substring(start, end) : null;
+    }
+
+    /** 退出时同步上传云端（write-back）。返回结果文案；同时存入 lastCloudMsg 供主菜单回显。 */
+    public String uploadSave(GameSave save) {
+        String msg;
+        if (sessionToken == null) {
+            msg = "未登录，云端跳过";
+        } else if (save.slot == null || save.slot.isEmpty()) {
+            msg = "存档无槽名，跳过";
+        } else {
+            String json = save.toJson();
+            String name = save.className + " · " + save.coins + "币";
+            String err = cloudSaves.upload(sessionToken, save.slot, name, save.seed, GAME_VERSION, json);
+            msg = err == null ? "云端已同步（" + save.slot + "）" : ("云端同步失败：" + err);
+        }
+        lastCloudMsg = msg;
+        Gdx.app.log("CaveDream", "云存档：" + msg);
+        return msg;
+    }
+
+    /** 取走并清空上次云存档结果消息（主菜单弹出）。 */
+    public String takeCloudMsg() {
+        String m = lastCloudMsg;
+        lastCloudMsg = null;
+        return m;
+    }
+
+    /** 云端槽位摘要（阻塞，需在后台线程调）；未登录返回空。 */
+    public java.util.List<java.util.Map<String, Object>> cloudList() {
+        return sessionToken == null ? java.util.List.of() : cloudSaves.list(sessionToken);
+    }
+
+    /** read-through：从云端拉某槽→写回本地主存→返回 GameSave（失败 null）。阻塞，后台线程调。 */
+    public GameSave cloudPull(String slotKey) {
+        if (sessionToken == null) {
+            return null;
+        }
+        String json = cloudSaves.download(sessionToken, slotKey);
+        if (json == null) {
+            return null;
+        }
+        try {
+            GameSave s = GameSave.fromJson(json);
+            s.slot = slotKey;
+            saveGame(s);                     // 落到本地缓存，下次即本地命中
+            return s;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** 继续最新一个存档（列表屏未用时的便捷入口）。 */
     public void continueGame() {
         java.util.List<GameSave> all = listSaves();
@@ -143,6 +262,10 @@ public class CaveDreamGame extends Game {
     /** 继续指定存档：加载屏按存档种子重建中世界，进 PlayScreen 后套用改动/状态（沿用原槽）。 */
     public void continueGame(GameSave save) {
         PlayerClass pc = PlayerClass.valueOf(save.className);
-        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot));
+        PaintedLook look = new PaintedLook();
+        if (save.faceColors != null && save.faceColors.length == PaintedLook.W * PaintedLook.H) {
+            look = new PaintedLook(save.faceTemplateId, save.faceColors);
+        }
+        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot, look));
     }
 }

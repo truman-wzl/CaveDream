@@ -118,6 +118,10 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         stateTime += delta;
         fadeIn = Math.min(1f, fadeIn + delta / 0.6f);   // 黑屏→主菜单 0.6s 淡入
         consumePendingResult();
+        String cloudMsg = game.takeCloudMsg();   // 回显上次“保存并退出”的云端同步结果
+        if (cloudMsg != null) {
+            showNotice(cloudMsg);
+        }
         handleInput();
         renderVisuals();
         if (accountOpen) {
@@ -379,8 +383,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     /* ---------------- 会话持久化 ---------------- */
 
     private void saveSession(String token, String nickname) {
-        Gdx.files.external("cavedream/session.json")
-                .writeString("{\"token\":\"" + token + "\",\"nickname\":\"" + nickname + "\"}", false);
+        game.setSession(token, nickname);   // 统一存会话（内存+文件），供 PlayScreen 云存档
     }
 
     private void loadSession() {

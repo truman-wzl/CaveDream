@@ -31,6 +31,9 @@ public class GameSave {
     public int coins;                       // 铸梦币
     public int servantCap;                  // 召唤师仆从上限（存上限不存当前数；重进存档需重新召唤）
 
+    public int faceTemplateId;              // 捏脸画板模板 id（0=梦之主）
+    public int[] faceColors = new int[0];   // 玩家上色的外观（每格 ARGB，882 格）
+
     public String toJson() {
         Json json = new Json();
         json.setIgnoreUnknownFields(true);
