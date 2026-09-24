@@ -64,9 +64,9 @@ public class CaveDreamGame extends Game {
         setScreen(new ClassScreen(this));
     }
 
-    /** 选定职业后→生成加载屏（后台生成中世界，完成进 PlayScreen）。 */
+    /** 选定职业后→生成加载屏（后台生成中世界，完成进 PlayScreen）；分配一个全新存档槽。 */
     public void startNewDream(PlayerClass playerClass) {
-        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null));
+        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot()));
     }
 
     private static long freshSeed() {
@@ -78,10 +78,15 @@ public class CaveDreamGame extends Game {
         setScreen(new TitleScreen(this));
     }
 
-    /* ---------------- 本地存档（可反复存/读测试） ---------------- */
+    /* ---------------- 本地存档（每账号可无限多档，每档一个文件） ---------------- */
 
-    private FileHandle saveFile() {
-        return Gdx.files.external(".cavedream/save1.json");
+    private static FileHandle saveFile(String slot) {
+        return Gdx.files.external(".cavedream/" + slot);
+    }
+
+    /** 新存档分配唯一槽位文件名（时间戳+随机→不互盖、可无限）。 */
+    private static String freshSlot() {
+        return "save-" + System.currentTimeMillis() + "-" + (int) (Math.random() * 1000) + ".json";
     }
 
     /** 是否已有存档（驱动“继续游戏”可用性）。 */
@@ -89,7 +94,7 @@ public class CaveDreamGame extends Game {
         return !listSaves().isEmpty();
     }
 
-    /** 列出本地已有存档（扫 .cavedream/save*.json）。 */
+    /** 列出本地已有存档（扫 .cavedream/save*.json，不限个数）。 */
     public java.util.List<GameSave> listSaves() {
         java.util.List<GameSave> out = new java.util.ArrayList<>();
         FileHandle dir = Gdx.files.external(".cavedream");
@@ -100,7 +105,11 @@ public class CaveDreamGame extends Game {
             String n = f.name();
             if (n.startsWith("save") && n.endsWith(".json")) {
                 try {
-                    out.add(GameSave.fromJson(f.readString()));
+                    GameSave s = GameSave.fromJson(f.readString());
+                    if (s.slot == null || s.slot.isEmpty()) {
+                        s.slot = n;   // 旧档兼容：用文件名作槽位
+                    }
+                    out.add(s);
                 } catch (Exception ignore) {
                     // 损坏存档跳过
                 }
@@ -109,28 +118,31 @@ public class CaveDreamGame extends Game {
         return out;
     }
 
-    /** 写存档到本地文件。 */
+    /** 写存档到其所属槽位（slot 缺失则分配新槽）。 */
     public void saveGame(GameSave save) {
-        FileHandle f = saveFile();
+        if (save.slot == null || save.slot.isEmpty()) {
+            save.slot = freshSlot();
+        }
+        FileHandle f = saveFile(save.slot);
         f.parent().mkdirs();
         f.writeString(save.toJson(), false);
-        Gdx.app.log("CaveDream", "已存档 → " + f.path());
+        Gdx.app.log("CaveDream", "已存档 → " + f.name());
     }
 
-    /** 继续游戏：读回默认存档 → 交给加载屏按种子重建世界并套用。无存档则转选职业。 */
+    /** 继续最新一个存档（列表屏未用时的便捷入口）。 */
     public void continueGame() {
-        FileHandle f = saveFile();
-        if (!f.exists()) {
+        java.util.List<GameSave> all = listSaves();
+        if (all.isEmpty()) {
             Gdx.app.log("CaveDream", "无存档，转新游戏");
             startNewDream();
             return;
         }
-        continueGame(GameSave.fromJson(f.readString()));
+        continueGame(all.get(all.size() - 1));
     }
 
-    /** 继续指定存档：加载屏按存档种子重建中世界，进 PlayScreen 后套用改动/状态。 */
+    /** 继续指定存档：加载屏按存档种子重建中世界，进 PlayScreen 后套用改动/状态（沿用原槽）。 */
     public void continueGame(GameSave save) {
         PlayerClass pc = PlayerClass.valueOf(save.className);
-        setScreen(new LoadingScreen(this, pc, save.seed, save));
+        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot));
     }
 }

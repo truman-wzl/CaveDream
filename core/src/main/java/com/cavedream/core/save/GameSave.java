@@ -8,6 +8,7 @@ import com.badlogic.gdx.utils.Json;
  */
 public class GameSave {
 
+    public String slot;                     // 存档槽位文件名（每档一个，新建不互盖）
     public String className;
     public int seed;
 

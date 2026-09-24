@@ -14,6 +14,7 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Disposable;
 import com.cavedream.core.CaveDreamGame;
+import com.cavedream.core.fx.Projectile;
 import com.cavedream.core.light.GameClock;
 import com.cavedream.core.light.LightEngine;
 import com.cavedream.core.light.LightSource;
@@ -34,6 +35,7 @@ import com.cavedream.core.world.LayerWorld;
 import com.cavedream.core.world.PlayerEntity;
 import com.cavedream.core.world.Tool;
 import com.cavedream.core.world.mob.Mob;
+import com.cavedream.core.world.mob.Servant;
 import com.cavedream.core.world.mob.Slime;
 import com.cavedream.core.world.mob.SpawnManager;
 
@@ -119,9 +121,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private boolean downed;                                                   // 濒死态
     private float downedT;                                                    // 濒死倒计时（秒）
     private float spawnX, spawnY;                                             // 出生点（溃梦复活）
+    private final java.util.List<Projectile> projectiles = new java.util.ArrayList<>();   // 远程武器弹道
+    private final java.util.List<Servant> servants = new java.util.ArrayList<>();          // 召唤师仆从
+    private static final int MAX_SERVANTS = 1;                                              // 默认上限（天赋可增）
+    private float slashT;                                                     // 近战刀光时长
+    private int slashDir;
     // —— 世界/存档/暂停 ——
     private final long seed;                                                  // 世界种子（存档用）
+    private String slot;                                                      // 存档槽位文件名
     private static final int LIGHT_RADIUS = 90;                               // 局部光照重算半径（格）
+    private int lightRadius = 100;                                             // 当前重算半径（随视口自适应）
     private int lastLCx = Integer.MIN_VALUE, lastLCy;                         // 上次光照重算中心
     private float saveTimer;                                                  // 自动存档计时
     private boolean paused;                                                   // ESC 暂停菜单
@@ -224,6 +233,11 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             updateDrops(delta);
             stats.update(delta);
             updateMobs(delta);
+            updateProjectiles(delta);
+            updateServants(delta);
+            if (slashT > 0f) {
+                slashT -= delta;
+            }
             saveTimer += delta;
             if (saveTimer >= 30f) {   // 每 30 秒自动存档
                 saveTimer = 0f;
@@ -254,6 +268,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawMobs();
         drawDrops();
         drawPlayer();
+        renderProjectiles();
+        renderServants();
+        drawSlashVfx();
         drawPickupFx();
         drawDust();
         drawCursor();
@@ -265,14 +282,18 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawToast();
     }
 
-    /** 光照：脏（挖/放）或玩家移到新区域时，按玩家周围窗口局部重算。 */
+    /** 光照：以相机为中心、覆盖整个视口+余量的方框重算（避免未算区域变黑）；脏或相机移动过大时触发。 */
     private void ensureLighting() {
-        int cx = (int) Math.floor(player.centerX() / TILE);
-        int cy = (int) Math.floor(player.centerY() / TILE);
-        if (lightDirty || Math.abs(cx - lastLCx) > LIGHT_RADIUS / 2 || Math.abs(cy - lastLCy) > LIGHT_RADIUS / 2) {
-            lightEngine.recomputeRegion(world, cx, cy, LIGHT_RADIUS);
-            lastLCx = cx;
-            lastLCy = cy;
+        int ccx = (int) Math.floor(camera.position.x / TILE);
+        int ccy = (int) Math.floor(camera.position.y / TILE);
+        int need = (int) (Math.max(camera.viewportWidth, camera.viewportHeight) / TILE / 2f) + 34;
+        need = Math.max(need, LIGHT_RADIUS);
+        if (lightDirty || need > lightRadius + 8
+                || Math.abs(ccx - lastLCx) > 20 || Math.abs(ccy - lastLCy) > 20) {
+            lightRadius = need;
+            lightEngine.recomputeRegion(world, ccx, ccy, lightRadius);
+            lastLCx = ccx;
+            lastLCy = ccy;
             lightDirty = false;
         }
     }
@@ -357,15 +378,30 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private void drawStats() {
         batch.setProjectionMatrix(uiCam.combined);
         batch.begin();
-        float x = 16f, top = uiCam.viewportHeight - 16f;
+        float pip = uiCam.viewportHeight * 0.038f;      // 双条图标相对屏高
+        float step = pip * 1.12f;
+        float x = pip * 0.6f, top = uiCam.viewportHeight - pip * 0.6f;
         int moons = (int) Math.ceil(stats.maxLucidity() / 10f);
-        drawPips(uiIcons.moon(), x, top, moons, stats.lucidity() / 10f);
+        drawPips(uiIcons.moon(), x, top, step, pip, moons, stats.lucidity() / 10f);
         int stars = (int) Math.ceil(stats.maxMana() / 10f);
-        drawPips(uiIcons.star(), x, top - 30f, stars, stats.mana() / 10f);
+        float row2 = top - step * 1.5f;
+        drawPips(uiIcons.star(), x, row2, step, pip, stars, stats.mana() / 10f);
         font.setColor(0.9f, 0.92f, 1f, 1f);
-        font.draw(batch, stats.lucidity() + "/" + stats.maxLucidity(), x + moons * 26f + 8, top - 6);
-        font.draw(batch, stats.mana() + "/" + stats.maxMana(), x + stars * 26f + 8, top - 36);
+        font.draw(batch, stats.lucidity() + "/" + stats.maxLucidity(), x + moons * step + pip * 0.3f, top - pip * 0.3f);
+        font.draw(batch, stats.mana() + "/" + stats.maxMana(), x + stars * step + pip * 0.3f, row2 - pip * 0.3f);
         font.setColor(1, 1, 1, 1);
+        // 仆从指示（召唤师）：小紫球一排 + 寿命环
+        if (!servants.isEmpty()) {
+            float iy = row2 - step * 1.4f;
+            for (int i = 0; i < servants.size(); i++) {
+                batch.setColor(0.7f, 0.55f, 1f, 1f);
+                batch.draw(pixel, x + i * step, iy - pip, pip, pip);
+                batch.setColor(1, 1, 1, 1);
+            }
+            font.setColor(0.75f, 0.65f, 0.95f, 1f);
+            font.draw(batch, "仆从 " + servants.size(), x + servants.size() * step + pip * 0.3f, iy - pip * 0.3f);
+            font.setColor(1, 1, 1, 1);
+        }
         // 铸梦币 + 操作提示（右上）
         font.setColor(1f, 0.9f, 0.4f, 1f);
         font.draw(batch, "铸梦币 " + coins, uiCam.viewportWidth - 130, uiCam.viewportHeight - 24);
@@ -384,9 +420,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.end();
     }
 
-    /** 一排图标，第 i 个的 alpha = 该格已填充比例（实现“由浅变深/缺则透明”）。 */
-    private void drawPips(Texture tex, float x, float y, int count, float value) {
-        float size = 22f, step = 26f;
+    /** 一排图标（相对尺寸），第 i 个 alpha = 该格已填充比例（缺=透明、满=实心）。 */
+    private void drawPips(Texture tex, float x, float y, float step, float size, int count, float value) {
         for (int i = 0; i < count; i++) {
             float fillAmt = Math.max(0f, Math.min(1f, value - i));   // 第 i 格填充 0~1
             batch.setColor(1, 1, 1, 0.22f + 0.78f * fillAmt);        // 空=淡、满=实
@@ -482,13 +517,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
         }
 
-        // 攻击：挥击命中目标格上的怪（受冷却）；空挥也进冷却
+        // 攻击：按职业武器触发特效（远程弹道 / 近战弧击）；空挥也进冷却
         if (leftPressed && attackCd <= 0f) {
-            Mob hit = tile != null ? mobAt(tile[0], tile[1]) : null;
-            if (hit != null && hit.damage(weaponDamage)) {
-                coins += 1 + (int) (Math.random() * 4);   // 击杀掉落铸梦币
-            }
-            attackCd = 0.4f;
+            attackCd = doAttack(held);
         }
 
         // 挖掘：仅当手持工具（镐/斧）且按住左键指向可挖方块时蓄力
@@ -740,7 +771,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 }
                 float dark = darknessAt(x, y);
                 if (dark > 0.004f) {
-                    fill(x * (float) TILE, y * (float) TILE, TILE, TILE, 0.02f, 0.03f, 0.07f, dark);
+                    fill(x * (float) TILE, y * (float) TILE, TILE, TILE, 0.06f, 0.07f, 0.13f, dark);
                 }
             }
         }
@@ -750,7 +781,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     /** 该格暗度 0~1（=1-亮度/15）；亮度受环境天光/块光与角色、特效等动态光共同影响。 */
     private float darknessAt(int x, int y) {
         float a = 1f - lightLevelAt(x, y) / (float) LightEngine.MAX_LEVEL;
-        return a > 0.98f ? 0.98f : a;   // 最暗近乎全黑但留一丝轮廓
+        return a > 0.9f ? 0.9f : a;   // 最暗也留 10% 可见，整体更亮
     }
 
     /** 该格合成亮度 0~15（对外 1~16 级 = +1）：天光经太阳方向投影，块光/角色光不受太阳遮挡。 */
@@ -796,17 +827,17 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         } else {
             tilt = 0f;
         }
-        // 手持镐（先画身体压在柄上更像握持）；挖掘时绕手挥动
-        // 手持物挥击（任何物品左键都挥，含空挥）：swingT 驱动 0→1→0 的弧
-        float swing = swinging ? (float) Math.sin(swingT * Math.PI) : 0f;
-        float pickAng = (facing > 0 ? -30f : 30f) + swing * 80f * (facing > 0 ? 1 : -1);
-        float hx = player.centerX() + facing * w * 0.5f;
-        float hy = player.centerY() + bob;
-        float ps = 26f;
+        // 手持武器：长度≈身高，从头顶后方向前勈砍（绕握点旋转，easeOut 加速下砍）
         Item held = inventory.selectedItem();
         TextureRegion hand = held != null ? itemSprite(held) : pickaxeRegion;
-        batch.draw(hand, hx - ps / 2, hy - ps / 2, ps / 2, ps / 2, ps, ps, facing, 1, pickAng);
-        // 侧脸身体贴图默认朝右；scaleX=facing 镜像，tilt 为小幅旋转
+        float ps = h * 1.0f;
+        float gx = player.centerX() + facing * w * 0.42f;              // 握点（手）
+        float gy = player.centerY() + bob + h * 0.15f;
+        float e = swinging ? (1f - (1f - swingT) * (1f - swingT)) : 0f; // easeOut 0→1
+        float ang = swinging ? (-150f + 200f * e) : -28f;              // 举过头顶→向前勈下；静止斜举
+        float rot = facing > 0 ? ang : -ang;
+        batch.draw(hand, gx - ps / 2f, gy, ps / 2f, 0f, ps, ps, facing, 1f, rot);
+        // 侧脸身体贴图默认朝右；scaleX=facing 镜像，tilt 为小幅旋转（身体盖在握柄上→更像手持）
         batch.draw(dreamerRegion, player.x(), player.y() + bob, w / 2, h / 2, w, h, facing, 1, tilt);
     }
 
@@ -867,6 +898,172 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 font.draw(batch, String.valueOf(d.count()), cx + size / 2 - 4, cy + size / 2);
             }
         }
+    }
+
+    /** 按职业武器触发攻击，返回冷却（秒）。 */
+    private float doAttack(Item held) {
+        float pcx = player.centerX(), pcy = player.centerY();
+        if (held == null || held.kind() != Item.Kind.WEAPON) {
+            slashT = 0.16f;   // 非武器：轻挥（空挥），无伤害
+            slashDir = player.facing();
+            return 0.35f;
+        }
+        float[] a = aimVec();
+        switch (held.id()) {
+            case 200:                                  // 战士：宽弧近战扫击
+                meleeSwing(weaponDamage + 6, 1.15f);
+                return 0.42f;
+            case 203:                                  // 射手：箭（抛物线）
+                spawnProjectile(pcx, pcy, a, 780, weaponDamage, 1.1f, Projectile.ARROW);
+                return 0.34f;
+            case 201:                                  // 法师：魔法弹（耗魔）
+                if (stats.spendMana(2)) {
+                    spawnProjectile(pcx, pcy, a, 540, weaponDamage + 8, 1.3f, Projectile.BOLT);
+                } else {
+                    toast = "魔能不足";
+                    toastT = 1f;
+                }
+                return 0.4f;
+            case 202:                                  // 通灵者：召唤/续命光球仆从（自动索敌作战）
+                if (!servants.isEmpty()) {
+                    servants.get(0).refreshLife(20f);   // 已有→续命
+                } else if (servants.size() < MAX_SERVANTS && stats.spendMana(5)) {
+                    servants.add(new Servant(pcx, pcy + 20f, 30, weaponDamage + 2, 25f));
+                } else {
+                    toast = "魔能不足";
+                    toastT = 1f;
+                }
+                return 0.5f;
+            case 204:                                  // 刺客：飞刀（快、短程）
+                spawnProjectile(pcx, pcy, a, 760, weaponDamage, 0.5f, Projectile.DAGGER);
+                return 0.28f;
+            default:
+                meleeSwing(weaponDamage, 1f);
+                return 0.4f;
+        }
+    }
+
+    /** 胛准单位向量（玩家中心→鼠标世界坐标）。 */
+    private float[] aimVec() {
+        mouseWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0);
+        camera.unproject(mouseWorld);
+        float dx = mouseWorld.x - player.centerX();
+        float dy = mouseWorld.y - player.centerY();
+        float len = (float) Math.hypot(dx, dy);
+        if (len < 1e-3f) {
+            return new float[]{player.facing(), 0f};
+        }
+        return new float[]{dx / len, dy / len};
+    }
+
+    private void spawnProjectile(float x, float y, float[] dir, float speed, int dmg, float life, int kind) {
+        projectiles.add(new Projectile(x, y, dir[0] * speed, dir[1] * speed, dmg, life, kind));
+    }
+
+    /** 近战弧击：面向半平面内、射程上的怪都受伤 + 出刀光。 */
+    private void meleeSwing(int dmg, float reachMul) {
+        float pcx = player.centerX(), pcy = player.centerY();
+        float reach = REACH_TILES * TILE * reachMul;
+        int f = player.facing();
+        for (Mob m : spawner.mobs()) {
+            float dx = m.centerX() - pcx, dy = m.centerY() - pcy;
+            if (Math.hypot(dx, dy) <= reach && dx * f > -4) {
+                if (m.damage(dmg)) {
+                    coins += 1 + (int) (Math.random() * 4);
+                }
+            }
+        }
+        slashT = 0.18f;
+        slashDir = f;
+    }
+
+    /** 仆从推进（跟随/索敌/攻击，到期或死亡移除）。 */
+    private void updateServants(float dt) {
+        float pcx = player.centerX(), pcy = player.centerY();
+        for (java.util.Iterator<Servant> it = servants.iterator(); it.hasNext(); ) {
+            if (!it.next().update(pcx, pcy, spawner.mobs(), dt)) {
+                it.remove();
+            }
+        }
+    }
+
+    /** 仆从渲染：发光紫球 + 核心 + 生命条。 */
+    private void renderServants() {
+        for (Servant sv : servants) {
+            float x = sv.x(), y = sv.y();
+            batch.setColor(0.7f, 0.55f, 1f, 0.35f);
+            batch.draw(pixel, x - 9, y - 9, 18, 18);          // 光晕
+            batch.setColor(0.88f, 0.78f, 1f, 1f);
+            batch.draw(pixel, x - 5, y - 5, 10, 10);          // 核心
+            batch.setColor(1, 1, 1, 1);
+            if (sv.hp() < sv.maxHp()) {
+                batch.setColor(0.1f, 0.1f, 0.1f, 0.8f);
+                batch.draw(pixel, x - 8, y + 11, 16, 2);
+                batch.setColor(0.6f, 0.9f, 1f, 1f);
+                batch.draw(pixel, x - 8, y + 11, 16 * (sv.hp() / (float) sv.maxHp()), 2);
+            }
+        }
+    }
+
+    /** 弹道推进 + 命中怪结算。 */
+    private void updateProjectiles(float dt) {
+        for (java.util.Iterator<Projectile> it = projectiles.iterator(); it.hasNext(); ) {
+            Projectile p = it.next();
+            if (!p.update(world, dt)) {
+                it.remove();
+                continue;
+            }
+            for (Mob m : spawner.mobs()) {
+                if (m.isAlive() && p.hitsRect(m.x(), m.y(), m.w(), m.h())) {
+                    if (m.damage(p.dmg)) {
+                        coins += 1 + (int) (Math.random() * 4);
+                    }
+                    it.remove();
+                    break;
+                }
+            }
+        }
+    }
+
+    /** 渲染弹道（世界坐标，随速度方向拉长的发光小条）。 */
+    private void renderProjectiles() {
+        for (Projectile p : projectiles) {
+            float r, g, b;
+            if (p.kind == Projectile.BOLT) {                       // 法师：青蓝
+                r = 0.45f; g = 0.7f; b = 1f;
+            } else if (p.kind == Projectile.ORB) {                 // 通灵：紫
+                r = 0.7f; g = 0.5f; b = 1f;
+            } else if (p.kind == Projectile.DAGGER) {              // 刺客：冷银
+                r = 0.8f; g = 0.85f; b = 0.95f;
+            } else {                                               // 箭：木褐
+                r = 0.7f; g = 0.5f; b = 0.28f;
+            }
+            float ang = (float) Math.toDegrees(Math.atan2(p.vy, p.vx));
+            float len = p.kind == Projectile.ARROW ? 14f : 10f;
+            float thick = p.kind == Projectile.ARROW ? 2.5f : 6f;
+            batch.setColor(r, g, b, 1f);
+            batch.draw(pixel, p.x - len / 2f, p.y - thick / 2f, len, thick);
+            batch.setColor(r, g, b, 0.35f);                        // 光晕
+            batch.draw(pixel, p.x - 5, p.y - 5, 10, 10);
+            batch.setColor(1, 1, 1, 1);
+        }
+    }
+
+    /** 近战刀光：面前一段渐隐弧。 */
+    private void drawSlashVfx() {
+        if (slashT <= 0f) {
+            return;
+        }
+        float k = slashT / 0.18f;
+        float cx = player.centerX() + slashDir * 22f;
+        float cy = player.centerY();
+        batch.setColor(1f, 1f, 0.85f, 0.7f * k);
+        for (int i = -2; i <= 2; i++) {
+            float ang = (float) Math.toRadians(i * 26f * slashDir);
+            float rr = 26f;
+            batch.draw(pixel, cx + (float) Math.cos(ang) * rr - 3, cy + (float) Math.sin(ang) * rr - 3, 6, 6);
+        }
+        batch.setColor(1, 1, 1, 1);
     }
 
     /** 刷怪推进 + 接触伤害 + 溃梦复活。 */
@@ -1052,6 +1249,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         float slot = uiCam.viewportHeight * 0.06f;      // 相对窗口高度（始终占固定比例）
         float gap = slot * 0.12f;
         float x0 = slot * 0.4f, y0 = slot * 0.4f;
+        WoodUi.panel(batch, pixel, x0 - 8, y0 - 8, n * (slot + gap) - gap + 16, slot + 16);   // 木质底板
         for (int i = 0; i < n; i++) {
             float x = x0 + i * (slot + gap);
             fill(x, y0, slot, slot, 0f, 0f, 0f, 0.42f);
@@ -1106,9 +1304,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.end();
     }
 
+    /** 设置存档槽位（新游戏分配新档时用）。 */
+    public void setSlot(String slot) {
+        this.slot = slot;
+    }
+
     /** 导出当前世界为存档数据（改动 diff + 玩家状态）。 */
     public GameSave toSave() {
         GameSave s = new GameSave();
+        s.slot = slot;
         s.className = playerClass.name();
         s.seed = (int) seed;
         s.editIdx = new int[edits.size()];
@@ -1135,6 +1339,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     /** 应用存档：重放世界改动 + 恢复玩家/背包/双条/时刻。 */
     public void applySave(GameSave s) {
+        if (s.slot != null) {
+            this.slot = s.slot;
+        }
         edits.clear();
         if (s.editIdx != null && s.editBlock != null) {
             int w = world.getWidth();

@@ -9,6 +9,7 @@ import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.cavedream.core.render.WoodUi;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
@@ -55,6 +56,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     private BitmapFont menuFont;
     private BitmapFont uiFont;
     private float stateTime;
+    private float fadeIn;
 
     private final float[] stars = new float[140 * 4];
     private final Vector3 screenPos = new Vector3();
@@ -103,6 +105,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     public void show() {
         stateTime = 0;
         selected = 0;
+        fadeIn = 0f;
     }
 
     @Override
@@ -113,12 +116,21 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     @Override
     public void render(float delta) {
         stateTime += delta;
+        fadeIn = Math.min(1f, fadeIn + delta / 0.6f);   // 黑屏→主菜单 0.6s 淡入
         consumePendingResult();
         handleInput();
         renderVisuals();
         if (accountOpen) {
             stage.act(delta);
             stage.draw();
+        }
+        if (fadeIn < 1f) {                                // 顶部盖一层渐隐黑幕，与 splash 衔接
+            batch.setProjectionMatrix(camera.combined);
+            batch.begin();
+            batch.setColor(0, 0, 0, 1f - fadeIn);
+            batch.draw(pixel, 0, 0, W, H);
+            batch.setColor(1, 1, 1, 1);
+            batch.end();
         }
     }
 
@@ -150,7 +162,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         float my = screenPos.y;
         for (int i = 0; i < MENU.length; i++) {
             float ry = menuY(i);
-            if (mx > W / 2 - 160 && mx < W / 2 + 160 && my > ry - 26 && my < ry + 34) {
+            if (mx > W / 2 - 150 && mx < W / 2 + 150 && my > ry - 38 && my < ry + 14) {
                 selected = i;
                 if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
                     confirm(i);
@@ -415,17 +427,19 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         drawCentered(batch, menuFont, "—— 无限的是梦，有限的是每个梦 ——", H - 200);
         menuFont.setColor(1, 1, 1, 1);
 
+        // 木质公告牌：菜单按钮包在一块木板里，每个选项是凸起的木条
+        float bw = 300f, bh = 52f, bgap = 14f;
+        float boardX = W / 2f - bw / 2f - 22f;
+        float boardY = menuY(MENU.length - 1) - 40f;
+        float boardH = (menuY(0) + 16f) - boardY;
+        WoodUi.panel(batch, pixel, boardX, boardY, bw + 44f, boardH);
         for (int i = 0; i < MENU.length; i++) {
             boolean sel = i == selected && !accountOpen;
-            menuFont.setColor(sel ? 1f : 0.45f, sel ? 0.95f : 0.48f, sel ? 0.6f : 0.6f, 1f);
-            float mw = textWidth(menuFont, MENU[i]);
-            float mx = W / 2 - mw / 2;
-            if (sel) {
-                batch.setColor(1f, 0.9f, 0.5f, 0.9f);
-                batch.draw(pixel, mx - 30, menuY(i) - 20, 14, 14);
-                batch.setColor(1, 1, 1, 1);
-            }
-            menuFont.draw(batch, MENU[i], mx, menuY(i));
+            float by = menuY(i) - 38f;
+            WoodUi.plank(batch, pixel, W / 2f - bw / 2f, by, bw, bh, sel);
+            menuFont.setColor(sel ? 1f : 0.82f, sel ? 0.96f : 0.78f, sel ? 0.62f : 0.6f, 1f);
+            drawCentered(batch, menuFont, MENU[i], by + bh / 2f + 8f);
+            menuFont.setColor(1, 1, 1, 1);
         }
         if (signedInAs != null) {
             uiFont.setColor(0.6f, 0.9f, 0.7f, 1f);

@@ -9,7 +9,7 @@ public final class PlayerEntity {
     public static final int TILE = 16;
 
     private static final float MOVE_SPEED = 170f;
-    private static final float JUMP_VELOCITY = 430f;
+    private static final float JUMP_VELOCITY = 450f;   // 初始跳跃高≈4.5 格（v²/2g=450²/2800≈72px）
     private static final float GRAVITY = 1400f;
     private static final float MAX_FALL = 700f;
     private static final float EPS = 0.01f;

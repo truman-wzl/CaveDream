@@ -98,7 +98,7 @@ public final class PlayerStats {
         sinceCombat += dt;
         if (!dreamBreak) {
             if (!inCombat()) {
-                lucAcc += LUCIDITY_REGEN_FULL * ratio2(lucidity, maxLucidity) * dt;
+                lucAcc += LUCIDITY_REGEN_FULL * regenCurve(lucidity, maxLucidity) * dt;
                 int add = (int) lucAcc;
                 if (add > 0) {
                     lucidity = Math.min(maxLucidity, lucidity + add);
@@ -107,7 +107,7 @@ public final class PlayerStats {
             }
         }
         float manaScale = inCombat() ? 0.25f : 1f;
-        manaAcc += MANA_REGEN_FULL * manaScale * ratio2(mana, maxMana) * dt;
+        manaAcc += MANA_REGEN_FULL * manaScale * regenCurve(mana, maxMana) * dt;
         int mad = (int) manaAcc;
         if (mad > 0) {
             mana = Math.min(maxMana, mana + mad);
@@ -125,11 +125,12 @@ public final class PlayerStats {
         manaAcc = 0f;
     }
 
-    private static double ratio2(int cur, int max) {
+    /** 回复曲线：越满越快（二次），但带 15% 地板→再低也不会完全停滞。 */
+    private static double regenCurve(int cur, int max) {
         if (max <= 0) {
             return 0;
         }
         double r = cur / (double) max;
-        return r * r;
+        return 0.15 + 0.85 * r * r;
     }
 }

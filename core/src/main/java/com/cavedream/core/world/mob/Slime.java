@@ -21,7 +21,8 @@ public class Slime extends Mob {
     private static final float H = 18f;
     private static final int MAX_HP = 24;
     private static final float HOP_VX = 78f;
-    private static final float HOP_VY = 300f;
+    private static final float HOP_VY_MIN = 500f;   // 跳高≈5.5 格（v²/2g）
+    private static final float HOP_VY_RANGE = 60f;   // +至≈7 格
 
     private final Random rnd;
     private float hopTimer;
@@ -40,7 +41,7 @@ public class Slime extends Mob {
             if (hopTimer <= 0f) {
                 int dir = px >= centerX() ? 1 : -1;      // 朝玩家跳
                 vx = dir * HOP_VX;
-                vy = HOP_VY;
+                vy = HOP_VY_MIN + rnd.nextFloat() * HOP_VY_RANGE;   // 5.5~7 格随机
                 onGround = false;
                 hopTimer = 0.7f + rnd.nextFloat() * 0.9f;
             }
@@ -66,8 +67,14 @@ public class Slime extends Mob {
                 break;
             }
         }
+        return onFloor(world, tileX, topY, colorIndex, seed);
+    }
+
+    /** 在指定列、已知地面行 floorY 之上放一只史莱姆。 */
+    public static Slime onFloor(LayerWorld world, int tileX, int floorY, int colorIndex, long seed) {
+        int t = PlayerEntity.TILE;
         float x = tileX * (float) t + (t - W) / 2f;
-        float y = (topY + 1) * (float) t + 1f;
+        float y = (floorY + 1) * (float) t + 1f;
         return new Slime(x, y, colorIndex, seed);
     }
 }

@@ -7,22 +7,22 @@ import com.cavedream.core.item.Item;
  * 武器精通随使用走、跨职业无惩罚；此处只定"开局给什么"。
  */
 public enum PlayerClass {
-    WARRIOR("战士", Item.WARRIOR_SWORD, 120, 10),
-    MAGE("法师", Item.MAGE_WAND, 90, 20),
-    SUMMONER("通灵者", Item.SUMMONER_STAFF, 100, 15),
-    ARCHER("射手", Item.ARCHER_BOW, 100, 12),
-    ASSASSIN("刺客", Item.ASSASSIN_DAGGER, 95, 12);
+    WARRIOR("战士", Item.WARRIOR_SWORD),
+    MAGE("法师", Item.MAGE_WAND),
+    SUMMONER("通灵者", Item.SUMMONER_STAFF),
+    ARCHER("射手", Item.ARCHER_BOW),
+    ASSASSIN("刺客", Item.ASSASSIN_DAGGER);
+
+    /** 全职业统一初始上限（GDD §3.3：梦眠 100、魔能 10）。 */
+    public static final int START_LUCIDITY_MAX = 100;
+    public static final int START_MANA_MAX = 10;
 
     private final String cn;
     private final Item weapon;
-    private final int startLucidityMax;
-    private final int startManaMax;
 
-    PlayerClass(String cn, Item weapon, int startLucidityMax, int startManaMax) {
+    PlayerClass(String cn, Item weapon) {
         this.cn = cn;
         this.weapon = weapon;
-        this.startLucidityMax = startLucidityMax;
-        this.startManaMax = startManaMax;
     }
 
     public String cn() {
@@ -34,10 +34,10 @@ public enum PlayerClass {
     }
 
     public int startLucidityMax() {
-        return startLucidityMax;
+        return START_LUCIDITY_MAX;
     }
 
     public int startManaMax() {
-        return startManaMax;
+        return START_MANA_MAX;
     }
 }

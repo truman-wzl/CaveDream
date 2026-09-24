@@ -18,10 +18,14 @@ import com.cavedream.core.CaveDreamGame;
  */
 public class SplashScreen extends ScreenAdapter implements Disposable {
 
-    private static final float FADE_IN = 1.0f;
-    private static final float HOLD = 0.9f;
-    private static final float FADE_OUT = 0.9f;
+    private static final float FADE_IN = 1.2f;
+    private static final float HOLD = 1.6f;
+    private static final float FADE_OUT = 1.0f;
     private static final float TOTAL = FADE_IN + HOLD + FADE_OUT;
+
+    // 开场黑底期间逐帧预热各屏中文字体（把建字库的卡顿藏在开场，避免主菜单首帧黑屏）
+    private static final int[] WARM_SIZES = {20, 26, 40, 48, 15};
+    private int warm;
 
     private final CaveDreamGame game;
     private final OrthographicCamera cam = new OrthographicCamera();
@@ -50,6 +54,9 @@ public class SplashScreen extends ScreenAdapter implements Disposable {
 
     @Override
     public void render(float delta) {
+        if (warm < WARM_SIZES.length) {
+            CjkFonts.get(WARM_SIZES[warm++]);   // 每帧预热一套字体
+        }
         t += delta;
         if (t >= TOTAL || Gdx.input.isKeyJustPressed(Input.Keys.SPACE)
                 || Gdx.input.isKeyJustPressed(Input.Keys.ENTER)

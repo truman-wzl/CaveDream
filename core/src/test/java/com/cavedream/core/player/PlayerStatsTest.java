@@ -10,8 +10,8 @@ class PlayerStatsTest {
     @Test
     void classSetsWeaponAndBars() {
         PlayerStats mage = new PlayerStats(PlayerClass.MAGE);
-        assertThat(mage.maxLucidity()).isEqualTo(90);
-        assertThat(mage.maxMana()).isEqualTo(20);
+        assertThat(mage.maxLucidity()).isEqualTo(100);   // 全职业统一 100/10
+        assertThat(mage.maxMana()).isEqualTo(10);
         assertThat(PlayerClass.WARRIOR.weapon().id()).isEqualTo(200);
     }
 
@@ -19,7 +19,7 @@ class PlayerStatsTest {
     void damageReducesLucidityAndEntersCombat() {
         PlayerStats s = new PlayerStats(PlayerClass.WARRIOR);
         s.damage(30);
-        assertThat(s.lucidity()).isEqualTo(90);
+        assertThat(s.lucidity()).isEqualTo(70);   // 100-30
         assertThat(s.inCombat()).isTrue();
     }
 
@@ -34,7 +34,7 @@ class PlayerStatsTest {
     @Test
     void outOfCombatRegensLucidity() {
         PlayerStats s = new PlayerStats(PlayerClass.WARRIOR);
-        s.damage(60);                       // lucidity 60, 进入战斗
+        s.damage(40);                       // lucidity 60, 进入战斗
         for (int i = 0; i < 60 * 10; i++) { // 推进 10 秒（脱战 3s 后开始回）
             s.update(1 / 60f);
         }
@@ -44,10 +44,10 @@ class PlayerStatsTest {
 
     @Test
     void manaRegensSlowerInCombat() {
-        PlayerStats combat = new PlayerStats(PlayerClass.MAGE);   // maxMana 20
+        PlayerStats combat = new PlayerStats(PlayerClass.MAGE);   // maxMana 10
         PlayerStats idle = new PlayerStats(PlayerClass.MAGE);
-        combat.spendMana(10);               // 降到 10（ratio²=0.25，回复可观测）
-        idle.spendMana(10);
+        combat.spendMana(5);                // 降到 5（ratio²=0.25，回复可观测）
+        idle.spendMana(5);
         combat.damage(1);                    // combat 进入战斗态（魔能 25% 回复）
         for (int i = 0; i < 120; i++) {      // 2 秒（combat 仍 <3s 保持战斗）
             combat.update(1 / 60f);
@@ -71,7 +71,7 @@ class PlayerStatsTest {
         s.damage(999);
         s.reviveAtAnchor();
         assertThat(s.isDreamBreak()).isFalse();
-        assertThat(s.lucidity()).isEqualTo(60);   // 120 的一半
+        assertThat(s.lucidity()).isEqualTo(50);   // 100 的一半
         assertThat(s.mana()).isEqualTo(s.maxMana());
     }
 }

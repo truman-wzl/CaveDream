@@ -62,26 +62,22 @@ public final class SpawnManager {
 
     private void trySpawn(LayerWorld world, double playerTileX, double playerTileY) {
         int w = world.getWidth();
-        for (int attempt = 0; attempt < 8; attempt++) {
+        int py = (int) Math.round(playerTileY);
+        for (int attempt = 0; attempt < 12; attempt++) {
             int side = rnd.nextBoolean() ? 1 : -1;
             int off = (int) (SPAWN_MIN_TILES + rnd.nextFloat() * (SPAWN_MAX_TILES - SPAWN_MIN_TILES));
             int tx = (int) Math.round(playerTileX + side * off);
             if (tx < 3 || tx > w - 4) {
                 continue;
             }
-            // 需地表为实心、其上两格为空（能站住史莱姆）
-            int top = -1;
-            for (int y = world.getHeight() - 3; y >= 1; y--) {
-                if (world.isSolid(tx, y)) {
-                    top = y;
-                    break;
+            // 在玩家同一高度带内找可站立的实心面（顶两格为空）→避免在浮岛旁的空天柱一路找到地底
+            for (int y = py + 2; y >= py - 16 && y >= 1; y--) {
+                if (world.isSolid(tx, y) && !world.isSolid(tx, y + 1) && !world.isSolid(tx, y + 2)) {
+                    mobs.add(Slime.onFloor(world, tx, y, rnd.nextInt(Slime.COLOR_COUNT),
+                            spawnCounter++ * 2654435761L));
+                    return;
                 }
             }
-            if (top < 0 || world.isSolid(tx, top + 1) || world.isSolid(tx, top + 2)) {
-                continue;
-            }
-            mobs.add(Slime.onSurface(world, tx, rnd.nextInt(Slime.COLOR_COUNT), spawnCounter++ * 2654435761L));
-            return;
         }
     }
 }
