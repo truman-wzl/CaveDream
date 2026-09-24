@@ -24,6 +24,22 @@ public final class CjkFonts {
     private CjkFonts() {
     }
 
+    /** 全字库字体按字号缓存、跨屏复用（避免每次切屏重建几千glyph导致卡顿）。 */
+    private static final java.util.HashMap<Integer, BitmapFont> CACHE = new java.util.HashMap<>();
+
+    /** 取（并缓存）含全字库的中文字体；调用方不要 dispose 返回值（共享）。 */
+    public static BitmapFont get(int sizePx) {
+        return CACHE.computeIfAbsent(sizePx, CjkFonts::create);
+    }
+
+    /** 退出时统一释放缓存字体。 */
+    public static void disposeAll() {
+        for (BitmapFont f : CACHE.values()) {
+            f.dispose();
+        }
+        CACHE.clear();
+    }
+
     /** 生成含 GB2312 一级字库的中文字体（菜单/正文/UI 用）。 */
     public static BitmapFont create(int sizePx) {
         return create(sizePx, null);

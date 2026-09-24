@@ -40,6 +40,12 @@ public class CaveDreamGame extends Game {
     }
 
     @Override
+    public void dispose() {
+        super.dispose();
+        com.cavedream.core.screen.CjkFonts.disposeAll();   // 释放跨屏共享的缓存字体
+    }
+
+    @Override
     public void render() {
         // F11 全屏/窗口切换（用 Graphics 接口，core 不依赖 LWJGL 后端）
         if (Gdx.input.isKeyJustPressed(Input.Keys.F11)) {

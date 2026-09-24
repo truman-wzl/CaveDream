@@ -149,7 +149,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
         batch = new SpriteBatch();
         camera = new OrthographicCamera();
-        font = CjkFonts.create(15);   // HUD 参数字体缩小（开发者信息保留但不占屏）
+        font = CjkFonts.get(15);   // HUD 参数字体（缓存复用，不逐屏重建）
         inventory.add(Item.WOOD_PICKAXE, 1);        // 工具：木镐
         inventory.add(Item.WOOD_AXE, 1);            // 工具：木斧
         inventory.add(playerClass.weapon(), 1);     // 职业主武器（按所选职业）
@@ -1156,7 +1156,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     @Override
     public void dispose() {
         batch.dispose();
-        font.dispose();
         pixel.dispose();
         textures.dispose();
         uiIcons.dispose();

@@ -41,8 +41,8 @@ public class ClassScreen extends ScreenAdapter implements Disposable {
         pm.fill();
         pixel = new Texture(pm);
         pm.dispose();
-        titleFont = CjkFonts.create(40);
-        labelFont = CjkFonts.create(20);
+        titleFont = CjkFonts.get(40);
+        labelFont = CjkFonts.get(20);
         icons = new UiIcons();
     }
 
@@ -144,8 +144,6 @@ public class ClassScreen extends ScreenAdapter implements Disposable {
     public void dispose() {
         batch.dispose();
         pixel.dispose();
-        titleFont.dispose();
-        labelFont.dispose();
         icons.dispose();
     }
 }

@@ -43,8 +43,8 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
         pm.fill();
         pixel = new Texture(pm);
         pm.dispose();
-        titleFont = CjkFonts.create(40);
-        font = CjkFonts.create(20);
+        titleFont = CjkFonts.get(40);
+        font = CjkFonts.get(20);
     }
 
     @Override
@@ -141,7 +141,5 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
     public void dispose() {
         batch.dispose();
         pixel.dispose();
-        titleFont.dispose();
-        font.dispose();
     }
 }

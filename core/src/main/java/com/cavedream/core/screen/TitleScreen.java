@@ -82,8 +82,8 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         batch = new SpriteBatch();
         camera = new OrthographicCamera();
         titleFont = CjkFonts.create(58, " 梦迹行者");   // 大字标题只用小字集，省显存
-        menuFont = CjkFonts.create(26);
-        uiFont = CjkFonts.create(20);
+        menuFont = CjkFonts.get(26);
+        uiFont = CjkFonts.get(20);
 
         pixel = oneByOneWhite();
         moon = makeMoon(128);
@@ -491,9 +491,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     public void dispose() {
         stage.dispose();
         batch.dispose();
-        titleFont.dispose();
-        menuFont.dispose();
-        uiFont.dispose();
+        titleFont.dispose();   // 小字集专用，可释放；menuFont/uiFont 为共享缓存，不在此释放
         pixel.dispose();
         moon.dispose();
     }

@@ -67,8 +67,8 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
         pm.fill();
         pixel = new Texture(pm);
         pm.dispose();
-        titleFont = CjkFonts.create(48);
-        font = CjkFonts.create(20);
+        titleFont = CjkFonts.get(48);
+        font = CjkFonts.get(20);
     }
 
     @Override
@@ -159,7 +159,5 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
     public void dispose() {
         batch.dispose();
         pixel.dispose();
-        titleFont.dispose();
-        font.dispose();
     }
 }
