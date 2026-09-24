@@ -46,9 +46,14 @@ class MobTest {
 
     @Test
     void damageKillsAtZero() {
+        LayerWorld world = new LayerWorld(20, 20);
         Slime s = new Slime(100, 100, 3, 1L);
         assertThat(s.damage(10)).isFalse();
         assertThat(s.hp()).isEqualTo(14);
+        assertThat(s.damage(999)).isFalse();   // 无敌帧内不叠加（防灌伤）
+        for (int i = 0; i < 40; i++) {
+            s.update(world, 0, 0, 1 / 60f);      // 推进 0.66s 越过无敌帧
+        }
         assertThat(s.damage(999)).isTrue();
         assertThat(s.isAlive()).isFalse();
     }

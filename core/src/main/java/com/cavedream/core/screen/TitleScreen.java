@@ -184,7 +184,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     }
 
     private static float menuY(int i) {
-        return 260 - i * 64;
+        return 360 - i * 64;   // 整体上移、竖向偏居中，与大标题/副标题保持间距
     }
 
     private void showNotice(String text) {

@@ -38,12 +38,13 @@ public class SplashScreen extends ScreenAdapter implements Disposable {
         this.game = game;
         batch = new SpriteBatch();
         font = new BitmapFont();          // 默认字体含 ASCII，够画 "CaveDream"
-        font.getData().setScale(4.2f);
+        font.getData().setScale(8f);      // 大字号，凸显品牌
     }
 
     @Override
     public void resize(int width, int height) {
-        cam.setToOrtho(false, width, height);
+        float a = width / (float) Math.max(1, height);
+        cam.setToOrtho(false, 720f * a, 720f);   // 虚拟高 720 基准→字标随窗口等比放大
     }
 
     @Override
@@ -54,10 +55,7 @@ public class SplashScreen extends ScreenAdapter implements Disposable {
 
     @Override
     public void render(float delta) {
-        if (warm < WARM_SIZES.length) {
-            CjkFonts.get(WARM_SIZES[warm++]);   // 每帧预热一套字体
-        }
-        t += delta;
+        t += Math.min(delta, 1 / 30f);   // delta 设上限：预热字体等卡顿不会让计时跳帧、字标一闪而过
         if (t >= TOTAL || Gdx.input.isKeyJustPressed(Input.Keys.SPACE)
                 || Gdx.input.isKeyJustPressed(Input.Keys.ENTER)
                 || Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
@@ -67,8 +65,8 @@ public class SplashScreen extends ScreenAdapter implements Disposable {
         float alpha = t < FADE_IN ? t / FADE_IN
                 : t < FADE_IN + HOLD ? 1f
                 : Math.max(0f, 1f - (t - FADE_IN - HOLD) / FADE_OUT);
-        // 淡入时字标轻微上浮，更顺滑
-        float rise = (1f - alpha) * 14f;
+        // 淡入时字标轻微上浮（幅度小，保持居中观感）
+        float rise = (1f - alpha) * 6f;
 
         Gdx.gl.glClearColor(0.01f, 0.012f, 0.03f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
@@ -79,10 +77,22 @@ public class SplashScreen extends ScreenAdapter implements Disposable {
         measure.setText(font, word);
         float x = cam.viewportWidth / 2f - measure.width / 2f;
         float y = cam.viewportHeight / 2f - measure.height / 2f + rise;
-        font.setColor(new Color(0.92f, 0.88f, 1f, alpha));
+        // 青色辉光（四周多遍叠）→ 凸显品牌
+        font.setColor(new Color(0.4f, 0.7f, 1f, alpha * 0.4f));
+        for (int o = 2; o <= 6; o += 2) {
+            font.draw(batch, word, x + o, y);
+            font.draw(batch, word, x - o, y);
+            font.draw(batch, word, x, y + o);
+            font.draw(batch, word, x, y - o);
+        }
+        // 纯白主体
+        font.setColor(new Color(1f, 1f, 1f, alpha));
         font.draw(batch, word, x, y);
         batch.end();
         font.setColor(Color.WHITE);
+        if (warm < WARM_SIZES.length) {
+            CjkFonts.get(WARM_SIZES[warm++]);   // 画完再预热下一套字体（本帧已显示字标，卡顿不影响观感）
+        }
     }
 
     @Override

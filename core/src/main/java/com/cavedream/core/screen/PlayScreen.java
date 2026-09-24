@@ -18,7 +18,6 @@ import com.cavedream.core.fx.Projectile;
 import com.cavedream.core.light.GameClock;
 import com.cavedream.core.light.LightEngine;
 import com.cavedream.core.light.LightSource;
-import com.cavedream.core.light.SunShadow;
 import com.cavedream.core.render.BlockTextures;
 import com.cavedream.core.render.ItemCatalog;
 import com.cavedream.core.render.SkyRenderer;
@@ -61,7 +60,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     }
     private static final int PLAYER_GLOW_LEVEL = 12;    // 角色自带微光峰值亮度 0~15
     private static final float PLAYER_GLOW_RADIUS = 6.5f;   // 角色微光半径（格）
-    private static final int SUN_SHADOW_DIST = 14;      // 太阳投影射线最大步数（格）
 
     private final CaveDreamGame game;
     private final PlayerClass playerClass;
@@ -92,8 +90,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final LightEngine lightEngine = new LightEngine();
     private final java.util.List<LightSource> dynamicLights = new java.util.ArrayList<>();
     private boolean lightDirty;
-    private int daylight0to15 = LightEngine.MAX_LEVEL;   // 当前天光强度
-    private float sunX, sunY = 1f;                        // 指向太阳的单位向量
+    private int daylight0to15 = LightEngine.MAX_LEVEL;   // 当前天光强度（整数级，供 HUD/星尘）
+    private double daylight = 1.0;                        // 连续昼光因子 0~1（供光照遮罩平滑渐变）
 
     // —— 背包 / 挖掘 / 动画 ——
     private static final int HOTBAR = 10;                // 快捷栏格数（背包前 10 格，GDD §3.5）
@@ -109,12 +107,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final java.util.List<PickupFx> pickupFx = new java.util.ArrayList<>();
     private final SpawnManager spawner = new SpawnManager(20260923L, 12);   // 昼夜刷怪
     private final int weaponDamage = 12;                                     // 主武器单击伤害（待武器系统细化）
-    private float invuln;                                                    // 接触伤害无敌帧
     private float attackCd;                                                   // 攻击冷却
     private boolean showInv;                                                  // E 开合背包
-    private static final float SWING_DUR = 0.28f;                            // 一次挥击时长（秒）
-    private float swingT;                                                     // 挥击进度 0~1
-    private boolean swinging;                                                 // 正在挥击
+    private boolean showMinimap = true;                                       // Q 开合右上小地图
+    private final com.cavedream.core.anim.Swing swing = com.cavedream.core.anim.Swing.chop();   // 挥击基础动作（所有手持物共用）
     // —— 战斗闭环 / 存档 ——
     private final java.util.HashMap<Integer, Integer> edits = new java.util.HashMap<>();   // 改动格 idx→方块id
     private int coins;                                                        // 铸梦币
@@ -123,9 +119,14 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private float spawnX, spawnY;                                             // 出生点（溃梦复活）
     private final java.util.List<Projectile> projectiles = new java.util.ArrayList<>();   // 远程武器弹道
     private final java.util.List<Servant> servants = new java.util.ArrayList<>();          // 召唤师仆从
-    private static final int MAX_SERVANTS = 1;                                              // 默认上限（天赋可增）
+    private int servantCap;                                                                 // 仆从上限（基础3+层数+饰品/套装）
+    private int servantLayerBonus = 0;                                                      // 每通一层 +1（最多 +5）
+    private int servantGearBonus = 0;                                                       // 饰品/套装加成
+    private float lastServantClick = -9f;                                                   // 双击收起仆从计时
     private float slashT;                                                     // 近战刀光时长
     private int slashDir;
+    private boolean swingHit;                                                 // 本轮挥击是否已在命中帧结算
+    private static final int TOOL_DAMAGE = 7;                                 // 工具（镐/斧）近战伤害
     // —— 世界/存档/暂停 ——
     private final long seed;                                                  // 世界种子（存档用）
     private String slot;                                                      // 存档槽位文件名
@@ -142,6 +143,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         this.game = game;
         this.playerClass = playerClass;
         this.stats = new PlayerStats(playerClass);
+        recomputeServantCap();   // 通灵师上限 3+成长；开局 0 只（需召唤）
         this.world = world;
         this.seed = seed;
         java.util.Random drnd = new java.util.Random(9L);
@@ -195,7 +197,17 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         float aspect = width / (float) Math.max(1, height);
         camera.viewportHeight = VIEW_HEIGHT_PX;
         camera.viewportWidth = VIEW_HEIGHT_PX * aspect;
-        uiCam.setToOrtho(false, width, height);   // UI：1 单位 = 1 屏幕像素，左下原点
+        // UI 用固定高度基准(720)、宽按屏幕比例→整套 HUD 作为“设计像素”随窗口等比缩放（不再绝对像素）
+        uiCam.setToOrtho(false, VIEW_HEIGHT_PX * aspect, VIEW_HEIGHT_PX);
+    }
+
+    /** 鼠标在 UI 虚拟坐标系的坐标（真实像素→uiCam 虚拟单位）。 */
+    private float uiMouseX() {
+        return Gdx.input.getX() * (uiCam.viewportWidth / Gdx.graphics.getWidth());
+    }
+
+    private float uiMouseY() {
+        return uiCam.viewportHeight - Gdx.input.getY() * (uiCam.viewportHeight / Gdx.graphics.getHeight());
     }
 
     @Override
@@ -212,6 +224,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         } else {
             time += delta;
             updateInput();
+            // 特殊规则：天空带（世界顶部 ~18%）重力降低→跳得更高
+            player.setGravityScale(player.centerY() / TILE > world.getHeight() * 0.82f ? 0.5f : 1f);
             player.update(world,
                     keyDown(Input.Keys.A) || keyDown(Input.Keys.LEFT),
                     keyDown(Input.Keys.D) || keyDown(Input.Keys.RIGHT),
@@ -225,9 +239,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             updateCamera();
             clock.update(delta);
             daylight0to15 = clock.daylightLevel0to15();
-            float[] sd = clock.sunDirection();
-            sunX = sd[0];
-            sunY = sd[1];
+            daylight = clock.daylightFactor();
             ensureLighting();
             rebuildDynamicLights();
             updateDrops(delta);
@@ -257,7 +269,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
         batch.setProjectionMatrix(uiCam.combined);
         batch.begin();
-        sky.draw(batch, Gdx.graphics.getWidth(), Gdx.graphics.getHeight(),
+        sky.draw(batch, uiCam.viewportWidth, uiCam.viewportHeight,
                 camera.position.x, time, (float) clock.hour(), d);
         batch.end();
         batch.setProjectionMatrix(camera.combined);
@@ -278,6 +290,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawHud();
         drawHotbar();
         drawStats();
+        drawMinimap();
         drawInventory();
         drawToast();
     }
@@ -286,10 +299,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private void ensureLighting() {
         int ccx = (int) Math.floor(camera.position.x / TILE);
         int ccy = (int) Math.floor(camera.position.y / TILE);
-        int need = (int) (Math.max(camera.viewportWidth, camera.viewportHeight) / TILE / 2f) + 34;
+        int need = (int) (Math.max(camera.viewportWidth, camera.viewportHeight) / TILE / 2f) + 50;
         need = Math.max(need, LIGHT_RADIUS);
         if (lightDirty || need > lightRadius + 8
-                || Math.abs(ccx - lastLCx) > 20 || Math.abs(ccy - lastLCy) > 20) {
+                || Math.abs(ccx - lastLCx) > 8 || Math.abs(ccy - lastLCy) > 8) {
             lightRadius = need;
             lightEngine.recomputeRegion(world, ccx, ccy, lightRadius);
             lastLCx = ccx;
@@ -331,7 +344,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (!Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
             return;
         }
-        float mx = Gdx.input.getX(), my = uiCam.viewportHeight - Gdx.input.getY();
+        float mx = uiMouseX(), my = uiMouseY();
         float cx = pauseBtnX(), top = pauseBtnTop(), bw = 260f, bh = 54f, gap = 16f;
         for (int i = 0; i < PAUSE_OPTS.length; i++) {
             float y = top - (i + 1) * (bh + gap) + gap;
@@ -363,7 +376,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         font.setColor(0.95f, 0.9f, 0.7f, 1f);
         font.draw(batch, "已暂停", cx, top - 12f);
         font.setColor(1, 1, 1, 1);
-        float mx = Gdx.input.getX(), my = uiCam.viewportHeight - Gdx.input.getY();
+        float mx = uiMouseX(), my = uiMouseY();
         for (int i = 0; i < PAUSE_OPTS.length; i++) {
             float y = top - (i + 1) * (bh + gap) + gap;
             boolean hover = mx >= cx && mx <= cx + bw && my >= y && my <= y + bh;
@@ -402,11 +415,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             font.draw(batch, "仆从 " + servants.size(), x + servants.size() * step + pip * 0.3f, iy - pip * 0.3f);
             font.setColor(1, 1, 1, 1);
         }
-        // 铸梦币 + 操作提示（右上）
+        // 铸梦币（左上、双条下方，避开右上小地图）
         font.setColor(1f, 0.9f, 0.4f, 1f);
-        font.draw(batch, "铸梦币 " + coins, uiCam.viewportWidth - 130, uiCam.viewportHeight - 24);
+        font.draw(batch, "铸梦币 " + coins, x, top - step * 3.4f);
+        // 操作提示（底部居中）
         font.setColor(0.8f, 0.82f, 0.9f, 0.9f);
-        font.draw(batch, "E 背包・F5 存档・左键使用・右键放置", uiCam.viewportWidth - 300, uiCam.viewportHeight - 46);
+        font.draw(batch, "E 背包・Q 小地图・F5 存档・左键使用/点快捷栏选格・右键放置",
+                uiCam.viewportWidth / 2f - 280f, uiCam.viewportHeight * 0.03f);
         font.setColor(1, 1, 1, 1);
         if (downed) {                                  // 濒死：红暗角 + 倒计时
             batch.setColor(0.45f, 0f, 0f, 0.4f);
@@ -476,6 +491,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (Gdx.input.isKeyJustPressed(Input.Keys.E)) {
             showInv = !showInv;
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.Q)) {
+            showMinimap = !showMinimap;   // Q 开关小地图
+        }
         if (showInv) {                       // 背包开启：只处理选格，不挖掘/放置/攻击
             miningNow = false;
             digProgress = 0f;
@@ -491,6 +509,29 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             miningNow = false;
             return;
         }
+        // 左键落在快捷栏→只选格（不触发使用/挖掘），方便鼠标党/Boss 战快速切槽
+        if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
+            if (minimapToggleHit()) {                    // 点小地图“−/+”→开合
+                showMinimap = !showMinimap;
+                return;
+            }
+            if (servantIndicatorHit()) {                 // 双击左上仆从栏→收起全部（重召唤用召唤书）
+                if (time - lastServantClick < 0.4f) {
+                    servants.clear();
+                    lastServantClick = -9f;
+                    toast = "仆从已收起";
+                    toastT = 1f;
+                } else {
+                    lastServantClick = time;
+                }
+                return;
+            }
+            int hb = hotbarSlotAtMouse();
+            if (hb >= 0) {
+                inventory.select(hb);
+                return;
+            }
+        }
         int[] tile = mouseTile();
         Item held = inventory.selectedItem();
         Tool heldTool = held == null ? null : Tool.byItemId(held.id());
@@ -504,22 +545,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         boolean leftHeld = Gdx.input.isButtonPressed(Input.Buttons.LEFT);
         boolean leftPressed = Gdx.input.isButtonJustPressed(Input.Buttons.LEFT);
 
-        // 使用手持物：按下即起一次挥击（任何物品可空挥，动画驱动，为后续技能/特效留接口）
-        if (leftPressed) {
-            swinging = true;
-            swingT = 0f;
+        // 使用手持物：冷却就绪且（点按或按住且上一挥已结束）→起新一轮挥击；伤害在“命中帧”结算（与动画同步）
+        if ((leftPressed || (leftHeld && !swing.isActive())) && attackCd <= 0f) {
+            swing.restart();
+            swingHit = false;
+            attackCd = attackCooldown(held);
         }
-        if (swinging) {
-            swingT += frameDelta / SWING_DUR;
-            if (swingT >= 1f) {
-                swingT = 0f;
-                swinging = false;
-            }
-        }
-
-        // 攻击：按职业武器触发特效（远程弹道 / 近战弧击）；空挥也进冷却
-        if (leftPressed && attackCd <= 0f) {
-            attackCd = doAttack(held);
+        swing.update(frameDelta);
+        if (!swingHit && swing.isActive() && swing.progress() >= 0.5f) {
+            applyAttack(held);                                                 // 挥到一半（刃到位）才判定
+            swingHit = true;
         }
 
         // 挖掘：仅当手持工具（镐/斧）且按住左键指向可挖方块时蓄力
@@ -780,24 +815,26 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     /** 该格暗度 0~1（=1-亮度/15）；亮度受环境天光/块光与角色、特效等动态光共同影响。 */
     private float darknessAt(int x, int y) {
-        float a = 1f - lightLevelAt(x, y) / (float) LightEngine.MAX_LEVEL;
-        return a > 0.9f ? 0.9f : a;   // 最暗也留 10% 可见，整体更亮
+        float a = 1f - lightLevelFloat(x, y);   // 连续亮度→连续暗度，不再按 16 级量化
+        return a > 0.9f ? 0.9f : a;             // 最暗也留 10% 可见
     }
 
-    /** 该格合成亮度 0~15（对外 1~16 级 = +1）：天光经太阳方向投影，块光/角色光不受太阳遮挡。 */
-    private int lightLevelAt(int x, int y) {
-        int skyGeo = lightEngine.skyAt(x, y);
-        float sunVis = daylight0to15 > 0
-                ? SunShadow.visibility(world, x, y, sunX, sunY, SUN_SHADOW_DIST) : 1f;
-        int skyLight = Math.round(skyGeo / (float) LightEngine.MAX_LEVEL * daylight0to15 * sunVis);
-        int lvl = Math.max(skyLight, lightEngine.blockAt(x, y));
+    /** 连续亮度 0~1（double/float）：天光×昼光因子、块光、动态光取最大（不再用太阳直射角投影）。 */
+    private float lightLevelFloat(int x, int y) {
+        float sky = lightEngine.skyAt(x, y) / (float) LightEngine.MAX_LEVEL * (float) daylight;
+        float lvl = Math.max(sky, lightEngine.blockAt(x, y) / (float) LightEngine.MAX_LEVEL);
         for (int i = 0, n = dynamicLights.size(); i < n; i++) {
-            int c = dynamicLights.get(i).at(x, y);
+            float c = dynamicLights.get(i).at(x, y) / (float) LightEngine.MAX_LEVEL;
             if (c > lvl) {
                 lvl = c;
             }
         }
-        return lvl;
+        return lvl > 1f ? 1f : lvl;
+    }
+
+    /** 整数亮度 0~15（对外 1~16 级 = +1），供 HUD “我处亮度”。 */
+    private int lightLevelAt(int x, int y) {
+        return Math.round(lightLevelFloat(x, y) * LightEngine.MAX_LEVEL);
     }
 
     /** 材质基础贴图：有 DB 图集时优先用（像素来自表），否则回退程序生成。 */
@@ -833,12 +870,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         float ps = h * 1.0f;
         float gx = player.centerX() + facing * w * 0.42f;              // 握点（手）
         float gy = player.centerY() + bob + h * 0.15f;
-        float e = swinging ? (1f - (1f - swingT) * (1f - swingT)) : 0f; // easeOut 0→1
-        float ang = swinging ? (-150f + 200f * e) : -28f;              // 举过头顶→向前勈下；静止斜举
-        float rot = facing > 0 ? ang : -ang;
+        float rot = swing.angle(20f, facing);                          // 基础挥砍弧（头顶→身前下）
         batch.draw(hand, gx - ps / 2f, gy, ps / 2f, 0f, ps, ps, facing, 1f, rot);
         // 侧脸身体贴图默认朝右；scaleX=facing 镜像，tilt 为小幅旋转（身体盖在握柄上→更像手持）
+        if (stats.isInvulnerable()) {                        // 受击无敌帧→闪白
+            batch.setColor(1f, 0.55f, 0.55f, 1f);
+        } else {
+            batch.setColor(1, 1, 1, 1);
+        }
         batch.draw(dreamerRegion, player.x(), player.y() + bob, w / 2, h / 2, w, h, facing, 1, tilt);
+        batch.setColor(1, 1, 1, 1);
     }
 
     /** 挖掘进度：目标格逐“凿深”的暗置 + 顶部进度条。 */
@@ -900,47 +941,71 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
-    /** 按职业武器触发攻击，返回冷却（秒）。 */
-    private float doAttack(Item held) {
+    /** 命中帧触发的攻击效果（按职业武器；工具也能近战；方块仅挥）。 */
+    private void applyAttack(Item held) {
         float pcx = player.centerX(), pcy = player.centerY();
-        if (held == null || held.kind() != Item.Kind.WEAPON) {
-            slashT = 0.16f;   // 非武器：轻挥（空挥），无伤害
-            slashDir = player.facing();
+        if (held == null) {
+            return;
+        }
+        if (held.kind() == Item.Kind.WEAPON) {
+            float[] a = aimVec();
+            switch (held.id()) {
+                case 200:                                  // 战士：宽弧近战扫击
+                    meleeSwing(weaponDamage + 6, 1.15f);
+                    break;
+                case 203:                                  // 射手：箭
+                    spawnProjectile(pcx, pcy, a, 780, weaponDamage, 1.1f, Projectile.ARROW);
+                    break;
+                case 201:                                  // 法师：魔法弹（耗魔）
+                    if (stats.spendMana(2)) {
+                        spawnProjectile(pcx, pcy, a, 540, weaponDamage + 8, 1.3f, Projectile.BOLT);
+                    } else {
+                        toast = "魔能不足";
+                        toastT = 1f;
+                    }
+                    break;
+                case 202:                                  // 通灵者：用召唤书召唤一只仆从（上限 servantCap，耗魔）
+                    if (servants.size() >= servantCap) {
+                        toast = "仆从已达上限";
+                        toastT = 1f;
+                    } else if (stats.spendMana(1)) {
+                        summonServant();
+                    } else {
+                        toast = "魔能不足";
+                        toastT = 1f;
+                    }
+                    break;
+                case 204:                                  // 刺客：飞刀
+                    spawnProjectile(pcx, pcy, a, 760, weaponDamage, 0.5f, Projectile.DAGGER);
+                    break;
+                default:
+                    meleeSwing(weaponDamage, 1f);
+                    break;
+            }
+        } else if (held.kind() == Item.Kind.TOOL) {        // 工具（镐/斧）也能拍怪
+            meleeSwing(TOOL_DAMAGE, 1f);
+        }
+    }
+
+    /** 一次攻击的冷却（= 两轮挥击最小间隔）。 */
+    private float attackCooldown(Item held) {
+        if (held == null) {
             return 0.35f;
         }
-        float[] a = aimVec();
-        switch (held.id()) {
-            case 200:                                  // 战士：宽弧近战扫击
-                meleeSwing(weaponDamage + 6, 1.15f);
-                return 0.42f;
-            case 203:                                  // 射手：箭（抛物线）
-                spawnProjectile(pcx, pcy, a, 780, weaponDamage, 1.1f, Projectile.ARROW);
-                return 0.34f;
-            case 201:                                  // 法师：魔法弹（耗魔）
-                if (stats.spendMana(2)) {
-                    spawnProjectile(pcx, pcy, a, 540, weaponDamage + 8, 1.3f, Projectile.BOLT);
-                } else {
-                    toast = "魔能不足";
-                    toastT = 1f;
-                }
-                return 0.4f;
-            case 202:                                  // 通灵者：召唤/续命光球仆从（自动索敌作战）
-                if (!servants.isEmpty()) {
-                    servants.get(0).refreshLife(20f);   // 已有→续命
-                } else if (servants.size() < MAX_SERVANTS && stats.spendMana(5)) {
-                    servants.add(new Servant(pcx, pcy + 20f, 30, weaponDamage + 2, 25f));
-                } else {
-                    toast = "魔能不足";
-                    toastT = 1f;
-                }
-                return 0.5f;
-            case 204:                                  // 刺客：飞刀（快、短程）
-                spawnProjectile(pcx, pcy, a, 760, weaponDamage, 0.5f, Projectile.DAGGER);
-                return 0.28f;
-            default:
-                meleeSwing(weaponDamage, 1f);
-                return 0.4f;
+        if (held.kind() == Item.Kind.WEAPON) {
+            switch (held.id()) {
+                case 200: return 0.42f;
+                case 203: return 0.34f;
+                case 201: return 0.4f;
+                case 202: return 0.5f;
+                case 204: return 0.28f;
+                default: return 0.4f;
+            }
         }
+        if (held.kind() == Item.Kind.TOOL) {
+            return 0.4f;
+        }
+        return 0.3f;
     }
 
     /** 胛准单位向量（玩家中心→鼠标世界坐标）。 */
@@ -960,21 +1025,49 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         projectiles.add(new Projectile(x, y, dir[0] * speed, dir[1] * speed, dmg, life, kind));
     }
 
-    /** 近战弧击：面向半平面内、射程上的怪都受伤 + 出刀光。 */
+    /** 召唤一只仆从（按现有数错开环绕相位）。 */
+    private void summonServant() {
+        float phase = (float) (servants.size() * (2 * Math.PI / Math.max(1, servantCap)));
+        servants.add(new Servant(player.centerX(), player.centerY() + 20f, 30, weaponDamage + 2, phase));
+    }
+
+    /** 仆从上限 = 基础3 + 层数加成(≤5) + 饰品/套装加成（仅通灵师）。 */
+    private void recomputeServantCap() {
+        servantCap = playerClass == PlayerClass.SUMMONER
+                ? 3 + Math.min(5, servantLayerBonus) + servantGearBonus : 0;
+    }
+
+    /** 近战弧击：面向半平面内、射程上、且视线不被方块遮挡的怪才受伤 + 击退 + 出刀光。 */
     private void meleeSwing(int dmg, float reachMul) {
         float pcx = player.centerX(), pcy = player.centerY();
         float reach = REACH_TILES * TILE * reachMul;
         int f = player.facing();
         for (Mob m : spawner.mobs()) {
             float dx = m.centerX() - pcx, dy = m.centerY() - pcy;
-            if (Math.hypot(dx, dy) <= reach && dx * f > -4) {
-                if (m.damage(dmg)) {
+            if (Math.hypot(dx, dy) <= reach && dx * f > -4
+                    && losClear(pcx, pcy, m.centerX(), m.centerY())) {
+                if (m.hurt(dmg, dx >= 0 ? 1f : -1f)) {
                     coins += 1 + (int) (Math.random() * 4);
                 }
             }
         }
         slashT = 0.18f;
         slashDir = f;
+    }
+
+    /** 两点间视线是否无固体遮挡（近战不能隔墙打人）。 */
+    private boolean losClear(float x0, float y0, float x1, float y1) {
+        float dx = x1 - x0, dy = y1 - y0;
+        float dist = (float) Math.hypot(dx, dy);
+        int steps = (int) (dist / (TILE * 0.5f));
+        for (int i = 1; i < steps; i++) {
+            float t = i / (float) steps;
+            int tx = (int) ((x0 + dx * t) / TILE), ty = (int) ((y0 + dy * t) / TILE);
+            if (world.isSolid(tx, ty)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 仆从推进（跟随/索敌/攻击，到期或死亡移除）。 */
@@ -1015,7 +1108,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
             for (Mob m : spawner.mobs()) {
                 if (m.isAlive() && p.hitsRect(m.x(), m.y(), m.w(), m.h())) {
-                    if (m.damage(p.dmg)) {
+                    if (m.hurt(p.dmg, p.vx >= 0 ? 1f : -1f)) {
                         coins += 1 + (int) (Math.random() * 4);
                     }
                     it.remove();
@@ -1068,16 +1161,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     /** 刷怪推进 + 接触伤害 + 溃梦复活。 */
     private void updateMobs(float dt) {
-        invuln = Math.max(0f, invuln - dt);
         attackCd = Math.max(0f, attackCd - dt);
         spawner.update(world, player.centerX(), player.centerY(), clock.isNight(), dt);
-        if (invuln <= 0f) {
-            for (Mob m : spawner.mobs()) {
-                if (m.overlapsRect(player.x(), player.y(), player.width(), player.height())) {
-                    stats.damage(m instanceof Slime ? ((Slime) m).touchDamage() : 5);
-                    invuln = 0.8f;
-                    break;
-                }
+        for (Mob m : spawner.mobs()) {                       // 接触伤害：stats.hurt 自带无敌帧（防灌伤）
+            if (m.overlapsRect(player.x(), player.y(), player.width(), player.height())) {
+                stats.hurt(m instanceof Slime ? ((Slime) m).touchDamage() : 5);
+                break;
             }
         }
         if (stats.isDreamBreak() && !downed) {           // 梦眠归零 → 进入 10 秒濒死
@@ -1117,6 +1206,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             Slime s = (Slime) m;
             int rgb = s.rgb();
             float r = ((rgb >> 16) & 0xFF) / 255f, g = ((rgb >> 8) & 0xFF) / 255f, b = (rgb & 0xFF) / 255f;
+            if (m.isInvulnerable()) {                       // 无敌帧→闪白
+                r = (r + 1f) / 2f; g = (g + 1f) / 2f; b = (b + 1f) / 2f;
+            }
             float squash = s.isOnGround() ? 1.15f : 0.85f;
             float w = s.w() * squash, h = s.h() * (2f - squash);
             float x = s.x() + (s.w() - w) / 2f, y = s.y();
@@ -1189,7 +1281,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     /** 鼠标命中的背包格序号；无则 -1。 */
     private int invSlotAtMouse() {
-        float mx = Gdx.input.getX(), my = uiCam.viewportHeight - Gdx.input.getY();
+        float mx = uiMouseX(), my = uiMouseY();
         for (int i = 0; i < INV_TOTAL; i++) {
             float[] r = invSlotRect(i);
             if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[2]) {
@@ -1241,14 +1333,135 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.end();
     }
 
+    /** 快捷栏尺寸（相对 UI 虚拟高）与命中检测，绘制与点击共用一套。 */
+    private float hotbarSlot() {
+        return uiCam.viewportHeight * 0.06f;
+    }
+
+    private float hotbarGap() {
+        return hotbarSlot() * 0.12f;
+    }
+
+    private float hotbarX0() {
+        return hotbarSlot() * 0.4f;
+    }
+
+    private float hotbarY0() {
+        return hotbarSlot() * 0.4f;
+    }
+
+    /** 鼠标命中的快捷栏格（仅前 HOTBAR 格）；无则 -1。 */
+    private int hotbarSlotAtMouse() {
+        float s = hotbarSlot(), gap = hotbarGap(), x0 = hotbarX0(), y0 = hotbarY0();
+        float mx = uiMouseX(), my = uiMouseY();
+        int n = Math.min(HOTBAR, inventory.size());
+        for (int i = 0; i < n; i++) {
+            float x = x0 + i * (s + gap);
+            if (mx >= x && mx <= x + s && my >= y0 && my <= y0 + s) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** 小地图尺寸/位置（右上角，约占屏高 26%）。 */
+    private float mmSize() {
+        return uiCam.viewportHeight * 0.26f;
+    }
+
+    private float mmX() {
+        return uiCam.viewportWidth - mmSize() - uiCam.viewportHeight * 0.02f;
+    }
+
+    private float mmY() {
+        return uiCam.viewportHeight - mmSize() - uiCam.viewportHeight * 0.02f;
+    }
+
+    /** 小地图“−/+”切换按钮是否命中（开=左上“−”，闭=右上“+”）。 */
+    private boolean minimapToggleHit() {
+        float mx = uiMouseX(), my = uiMouseY();
+        if (showMinimap) {
+            float bs = uiCam.viewportHeight * 0.04f;
+            float bx = mmX(), by = mmY() + mmSize() - bs;
+            return mx >= bx && mx <= bx + bs && my >= by && my <= by + bs;
+        }
+        float s = uiCam.viewportHeight * 0.05f;
+        float bx = uiCam.viewportWidth - s - uiCam.viewportHeight * 0.02f;
+        float by = uiCam.viewportHeight - s - uiCam.viewportHeight * 0.02f;
+        return mx >= bx && mx <= bx + s && my >= by && my <= by + s;
+    }
+
+    /** 左上仆从栏是否命中（仅通灵师且有仆从时可双击收起）。 */
+    private boolean servantIndicatorHit() {
+        if (playerClass != PlayerClass.SUMMONER || servants.isEmpty()) {
+            return false;
+        }
+        float pip = uiCam.viewportHeight * 0.038f, step = pip * 1.12f;
+        float x = pip * 0.6f, top = uiCam.viewportHeight - pip * 0.6f;
+        float iy = (top - step * 1.5f) - step * 1.4f;
+        float w = servants.size() * step + pip * 0.5f;
+        float mx = uiMouseX(), my = uiMouseY();
+        return mx >= x && mx <= x + w && my <= iy && my >= iy - pip;
+    }
+
+    /** 小地图：玩家周围地形色块 + 玩家黄点 + 怪红点；左上“−”可最小化。 */
+    private void drawMinimap() {
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        if (!showMinimap) {
+            float s = uiCam.viewportHeight * 0.05f;
+            float bx = uiCam.viewportWidth - s - uiCam.viewportHeight * 0.02f;
+            float by = uiCam.viewportHeight - s - uiCam.viewportHeight * 0.02f;
+            WoodUi.plank(batch, pixel, bx, by, s, s, false);
+            font.setColor(1, 1, 1, 1);
+            font.draw(batch, "+", bx + s / 2f - 4f, by + s / 2f + 6f);
+            batch.end();
+            return;
+        }
+        float size = mmSize(), mx = mmX(), my = mmY();
+        WoodUi.panel(batch, pixel, mx - 4, my - 4, size + 8, size + 8);
+        final int R = 48;
+        int cx = (int) Math.floor(player.centerX() / TILE);
+        int cy = (int) Math.floor(player.centerY() / TILE);
+        float cell = size / (2f * R);
+        for (int dx = -R; dx <= R; dx++) {
+            for (int dy = -R; dy <= R; dy++) {
+                int tx = cx + dx, ty = cy + dy;
+                if (!world.inBounds(tx, ty)) {
+                    continue;
+                }
+                BlockType b = world.blockAt(tx, ty);
+                if (b == BlockType.AIR) {
+                    continue;
+                }
+                batch.setColor(b.r(), b.g(), b.b(), b == BlockType.WATER ? 0.7f : 1f);
+                batch.draw(pixel, mx + (dx + R) * cell, my + (dy + R) * cell, cell + 0.5f, cell + 0.5f);
+            }
+        }
+        for (Mob m : spawner.mobs()) {
+            int mdx = (int) (m.centerX() / TILE) - cx, mdy = (int) (m.centerY() / TILE) - cy;
+            if (Math.abs(mdx) <= R && Math.abs(mdy) <= R) {
+                batch.setColor(1f, 0.25f, 0.25f, 1f);
+                batch.draw(pixel, mx + (mdx + R) * cell - 1, my + (mdy + R) * cell - 1, cell + 2, cell + 2);
+            }
+        }
+        batch.setColor(1f, 1f, 0.4f, 1f);                        // 玩家居中黄点
+        batch.draw(pixel, mx + size / 2f - 2, my + size / 2f - 2, 4, 4);
+        batch.setColor(1, 1, 1, 1);
+        float bs = uiCam.viewportHeight * 0.04f;                 // 左上“−”最小化按钮
+        WoodUi.plank(batch, pixel, mx, my + size - bs, bs, bs, false);
+        font.setColor(1, 1, 1, 1);
+        font.draw(batch, "-", mx + bs / 2f - 3f, my + size - bs / 2f + 5f);
+        batch.end();
+    }
+
     /** 快捷栏（屏幕左下，相对尺寸）：逐格画物品图标+数量，高亮当前格，旁标工具名。 */
     private void drawHotbar() {
         batch.setProjectionMatrix(uiCam.combined);
         batch.begin();
         int n = Math.min(HOTBAR, inventory.size());
-        float slot = uiCam.viewportHeight * 0.06f;      // 相对窗口高度（始终占固定比例）
-        float gap = slot * 0.12f;
-        float x0 = slot * 0.4f, y0 = slot * 0.4f;
+        float slot = hotbarSlot(), gap = hotbarGap();
+        float x0 = hotbarX0(), y0 = hotbarY0();
         WoodUi.panel(batch, pixel, x0 - 8, y0 - 8, n * (slot + gap) - gap + 16, slot + 16);   // 木质底板
         for (int i = 0; i < n; i++) {
             float x = x0 + i * (slot + gap);
@@ -1314,7 +1527,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         GameSave s = new GameSave();
         s.slot = slot;
         s.className = playerClass.name();
-        s.seed = (int) seed;
+        s.seed = seed;
         s.editIdx = new int[edits.size()];
         s.editBlock = new int[edits.size()];
         int i = 0;
@@ -1334,6 +1547,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         s.maxMana = stats.maxMana();
         s.clockMinutes = clock.totalMinutes();
         s.coins = coins;
+        s.servantCap = servantCap;
         return s;
     }
 
@@ -1357,6 +1571,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         stats.setMana(s.mana);
         clock.setTotalMinutes(s.clockMinutes);
         coins = s.coins;
+        if (s.servantCap > 0) {
+            servantCap = s.servantCap;   // 存上限；仆从不存，重进需重新召唤
+        }
+        servants.clear();
         lightDirty = true;
     }
 

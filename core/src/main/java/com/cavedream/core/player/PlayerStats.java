@@ -13,6 +13,8 @@ public final class PlayerStats {
     private static final float MANA_REGEN_FULL = 3f;
     /** 脱战阈值（秒）：受击后这么久无新伤害才算脱战。 */
     private static final float COMBAT_TIMEOUT = 3f;
+    /** 受击无敌帧时长（基础机制，与怪一致）。 */
+    private static final float PLAYER_IFRAME = 0.8f;
 
     private final int maxLucidity;
     private final int maxMana;
@@ -22,6 +24,7 @@ public final class PlayerStats {
     private float lucAcc;
     private float manaAcc;
     private boolean dreamBreak;
+    private float invulnT;                                                    // 受击无敌帧计时
 
     public PlayerStats(PlayerClass playerClass) {
         this.maxLucidity = playerClass.startLucidityMax();
@@ -76,6 +79,21 @@ public final class PlayerStats {
         }
     }
 
+    /** 受击统一入口（基类机制）：无敌帧内不受伤，否则扣血并进入无敌帧。返回是否吃到伤害。 */
+    public boolean hurt(int amount) {
+        if (invulnT > 0f || dreamBreak) {
+            return false;
+        }
+        invulnT = PLAYER_IFRAME;
+        damage(amount);
+        return true;
+    }
+
+    /** 是否处于受击无敌帧（供渲染闪白）。 */
+    public boolean isInvulnerable() {
+        return invulnT > 0f;
+    }
+
     /** 释放技能耗魔能；不足则失败（不扣）。 */
     public boolean spendMana(int amount) {
         if (amount <= 0) {
@@ -96,6 +114,9 @@ public final class PlayerStats {
     /** 每帧推进回复（dt 秒）。 */
     public void update(float dt) {
         sinceCombat += dt;
+        if (invulnT > 0f) {
+            invulnT -= dt;
+        }
         if (!dreamBreak) {
             if (!inCombat()) {
                 lucAcc += LUCIDITY_REGEN_FULL * regenCurve(lucidity, maxLucidity) * dt;
@@ -121,6 +142,7 @@ public final class PlayerStats {
         mana = maxMana;
         dreamBreak = false;
         sinceCombat = Float.MAX_VALUE;
+        invulnT = 0f;
         lucAcc = 0f;
         manaAcc = 0f;
     }

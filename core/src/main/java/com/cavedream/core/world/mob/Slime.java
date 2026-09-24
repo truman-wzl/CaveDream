@@ -11,6 +11,9 @@ import java.util.Random;
  */
 public class Slime extends Mob {
 
+    /** 敌怪 id（“一切皆 ID”）。 */
+    public static final int ID = 1000;
+
     /** 7 色史莱姆调色板（RGB）。 */
     public static final int[] PALETTE = {
             0x4C8A3E, 0x2E6FBF, 0xC0392B, 0xE6C34A, 0x8E7CC3, 0xE67E22, 0x49C7C9,
@@ -40,12 +43,22 @@ public class Slime extends Mob {
             hopTimer -= dt;
             if (hopTimer <= 0f) {
                 int dir = px >= centerX() ? 1 : -1;      // 朝玩家跳
-                vx = dir * HOP_VX;
-                vy = HOP_VY_MIN + rnd.nextFloat() * HOP_VY_RANGE;   // 5.5~7 格随机
+                int t = PlayerEntity.TILE;
+                int fx = (int) ((dir > 0 ? x + w + 2 : x - 2) / t);
+                int fy = (int) ((y + 2) / t);
+                boolean wallAhead = world.isSolid(fx, fy) || world.isSolid(fx, fy + 1);   // 前方有障碍→加大起跳翻越
+                vx = dir * (wallAhead ? HOP_VX * 1.5f : HOP_VX);
+                vy = wallAhead ? HOP_VY_MIN + HOP_VY_RANGE + 130f
+                        : HOP_VY_MIN + rnd.nextFloat() * HOP_VY_RANGE;
                 onGround = false;
                 hopTimer = 0.7f + rnd.nextFloat() * 0.9f;
             }
         }
+    }
+
+    @Override
+    public int typeId() {
+        return ID;
     }
 
     public int rgb() {

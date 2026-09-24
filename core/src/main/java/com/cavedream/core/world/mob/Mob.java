@@ -12,6 +12,8 @@ public abstract class Mob {
     protected static final float GRAVITY = 1400f;
     protected static final float MAX_FALL = 700f;
     protected static final float EPS = 0.01f;
+    protected static final float KNOCKBACK_X = 190f;   // 受击水平击退
+    protected static final float KNOCKBACK_Y = 150f;   // 受击轻微起跳
 
     protected float x;
     protected float y;
@@ -24,6 +26,8 @@ public abstract class Mob {
     protected final int colorIndex;
     protected boolean onGround;
     protected boolean alive = true;
+    protected float invulnT;                                                  // 受击无敌帧计时（防灌伤）
+    private static final float IFRAME = 0.5f;                                 // 无敌帧时长（秒）
 
     protected Mob(float x, float y, float w, float h, int maxHp, int colorIndex) {
         this.x = x;
@@ -38,6 +42,9 @@ public abstract class Mob {
     /** 每帧推进：先物理，再子类 AI。px/py 为玩家中心（供追踪/攻击判定）。 */
     public void update(LayerWorld world, float px, float py, float dt) {
         dt = Math.min(dt, 1f / 30f);
+        if (invulnT > 0f) {
+            invulnT -= dt;
+        }
         physics(world, dt);
         ai(world, px, py, dt);
     }
@@ -65,6 +72,9 @@ public abstract class Mob {
     /** 子类行为（跳跃/巡逻/攻击等）。 */
     protected abstract void ai(LayerWorld world, float px, float py, float dt);
 
+    /** 敌怪类型 id（“一切皆 ID”）：史莱姆=1000，后续怪顺延。 */
+    public abstract int typeId();
+
     private boolean overlapsSolid(LayerWorld world) {
         int t = PlayerEntity.TILE;
         int x0 = (int) Math.floor(x / t);
@@ -86,11 +96,12 @@ public abstract class Mob {
         return x < rx + rw && x + w > rx && y < ry + rh && y + h > ry;
     }
 
-    /** 受伤；归零则死亡。返回是否致死。 */
+    /** 受伤；归零则死亡。返回是否致死。无敌帧内不受伤（防灌伤）。 */
     public boolean damage(int amount) {
-        if (amount <= 0 || !alive) {
+        if (amount <= 0 || !alive || invulnT > 0f) {
             return false;
         }
+        invulnT = IFRAME;
         hp -= amount;
         if (hp <= 0) {
             hp = 0;
@@ -98,6 +109,19 @@ public abstract class Mob {
             return true;
         }
         return false;
+    }
+
+    /** 受伤 + 击退（knockDirX 为击退方向 -1/1）；未致死则给水平冲量 + 小跳起。 */
+    public boolean hurt(int amount, float knockDirX) {
+        boolean died = damage(amount);
+        if (!died) {
+            vx += knockDirX * KNOCKBACK_X;
+            if (onGround) {
+                vy = KNOCKBACK_Y;
+                onGround = false;
+            }
+        }
+        return died;
     }
 
     public float x() {
@@ -138,6 +162,11 @@ public abstract class Mob {
 
     public boolean isAlive() {
         return alive;
+    }
+
+    /** 是否处于受击无敌帧（供渲染闪白）。 */
+    public boolean isInvulnerable() {
+        return invulnT > 0f;
     }
 
     public boolean isOnGround() {

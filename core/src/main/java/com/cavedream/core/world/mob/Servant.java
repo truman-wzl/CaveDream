@@ -3,37 +3,39 @@ package com.cavedream.core.world.mob;
 import java.util.List;
 
 /**
- * 召唤仆从（通灵者/召唤师的光球宠物）：悬浮跟随玩家，自动锁定最近的怪并飞上去持续攻击；
- * 有自身寿命与"生命"，被时间消耗到期消失。纯逻辑、可单测（不依赖渲染）。
+ * 召唤仆从（通灵者/召唤师的光球宠物）：环绕玩家飞行，自动锁定最近的怪并飞上去持续攻击。
+ * 不自动消失（永久跟随，直到玩家手动收起）；不占模型。纯逻辑、可单测。
  */
 public class Servant {
 
-    private static final float FOLLOW_SPEED = 300f;
-    private static final float ATTACK_SPEED = 240f;
+    private static final float FOLLOW_SPEED = 320f;
+    private static final float ATTACK_SPEED = 260f;
     private static final float CONTACT = 16f;      // 命中距离（像素）
     private static final float RANGE = 18f * 16f;  // 索敌半径（像素，18 格）
+    private static final float ORBIT_R = 30f;      // 环绕半径（像素）
 
     private float x;
     private float y;
-    private int hp;
     private final int maxHp;
-    private float life;
+    private int hp;
     private final int dmg;
+    private final float orbitPhase;                // 多只仆从按相位错开环绕
+    private float t;
     private float atkCd;
 
-    public Servant(float x, float y, int maxHp, int dmg, float life) {
+    public Servant(float x, float y, int maxHp, int dmg, float orbitPhase) {
         this.x = x;
         this.y = y;
         this.maxHp = maxHp;
         this.hp = maxHp;
         this.dmg = dmg;
-        this.life = life;
+        this.orbitPhase = orbitPhase;
     }
 
-    /** 每帧：索敌→飞向并接触攻击；无怪则绕玩家悬停。返回是否仍存活。 */
+    /** 每帧：有怪→飞近接触攻击；无怪→绕玩家相位环绕。永不因时间消失（返回 hp>0）。 */
     public boolean update(float pcx, float pcy, List<Mob> mobs, float dt) {
         dt = Math.min(dt, 1f / 30f);
-        life -= dt;
+        t += dt;
         atkCd -= dt;
         Mob target = nearestMob(pcx, pcy, mobs);
         float tx, ty, speed;
@@ -46,8 +48,9 @@ public class Servant {
                 atkCd = 0.45f;
             }
         } else {
-            tx = pcx + 26f;                       // 悬停在玩家肩侧
-            ty = pcy + 22f;
+            double ang = orbitPhase + t * 1.6f;                 // 绕玩家旋转
+            tx = pcx + (float) Math.cos(ang) * ORBIT_R;
+            ty = pcy + (float) Math.sin(ang) * ORBIT_R;
             speed = FOLLOW_SPEED;
         }
         float dx = tx - x, dy = ty - y;
@@ -56,7 +59,7 @@ public class Servant {
             x += dx / d * Math.min(speed * dt, d);
             y += dy / d * Math.min(speed * dt, d);
         }
-        return life > 0f && hp > 0;
+        return hp > 0;
     }
 
     private Mob nearestMob(float pcx, float pcy, List<Mob> mobs) {
@@ -75,14 +78,9 @@ public class Servant {
         return best;
     }
 
-    /** 到期或受击可扣血（预留给敌人反击仆从）。 */
     public boolean damage(int amount) {
         hp = Math.max(0, hp - amount);
         return hp == 0;
-    }
-
-    public void refreshLife(float seconds) {
-        life = Math.max(life, seconds);
     }
 
     public float x() {
@@ -99,9 +97,5 @@ public class Servant {
 
     public int maxHp() {
         return maxHp;
-    }
-
-    public float life() {
-        return life;
     }
 }

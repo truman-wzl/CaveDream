@@ -23,6 +23,7 @@ public final class PlayerEntity {
     private float vy;
     private boolean onGround;
     private float speedScale = 1f;   // 移速倍率（濒死时 0.4）
+    private float gravityScale = 1f; // 重力倍率（天空带降低→跳得更高）
     /** 面向：1 右 / -1 左（贴图默认朝右，渲染时据此镜像） */
     private int facing = 1;
 
@@ -44,6 +45,11 @@ public final class PlayerEntity {
         this.speedScale = s;
     }
 
+    /** 重力倍率（天空带用较低值使跳跃更高）。 */
+    public void setGravityScale(float s) {
+        this.gravityScale = s;
+    }
+
     /**
      * 推进一帧。
      * @param dt  秒
@@ -62,7 +68,7 @@ public final class PlayerEntity {
             vy = JUMP_VELOCITY;
             onGround = false;
         }
-        vy = Math.max(vy - GRAVITY * dt, -MAX_FALL);
+        vy = Math.max(vy - GRAVITY * gravityScale * dt, -MAX_FALL);
 
         // X 轴移动 + 碰撞回弹
         x += vx * dt;

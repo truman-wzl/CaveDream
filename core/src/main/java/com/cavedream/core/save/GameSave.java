@@ -10,7 +10,7 @@ public class GameSave {
 
     public String slot;                     // 存档槽位文件名（每档一个，新建不互盖）
     public String className;
-    public int seed;
+    public long seed;                       // 世界种子（long，与生成一致；截断会重建出不同地形→悬空摔落）
 
     public int[] editIdx = new int[0];      // 被改动格的一维索引
     public int[] editBlock = new int[0];    // 对应方块 id（与 editIdx 平行）
@@ -29,6 +29,7 @@ public class GameSave {
 
     public int clockMinutes;                // 昼夜时刻（自 0:00 的分钟）
     public int coins;                       // 铸梦币
+    public int servantCap;                  // 召唤师仆从上限（存上限不存当前数；重进存档需重新召唤）
 
     public String toJson() {
         Json json = new Json();
