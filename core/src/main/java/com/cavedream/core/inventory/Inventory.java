@@ -111,6 +111,26 @@ public final class Inventory {
         return n;
     }
 
+    /** 移除最多 count 个该物品（合成扣料）；返回实际移除数。 */
+    public int remove(Item it, int count) {
+        if (it == null || count <= 0) {
+            return 0;
+        }
+        int remaining = count;
+        for (int i = 0; i < size && remaining > 0; i++) {
+            if (itemIds[i] == it.id()) {
+                int take = Math.min(counts[i], remaining);
+                counts[i] -= take;
+                remaining -= take;
+                if (counts[i] <= 0) {
+                    counts[i] = 0;
+                    itemIds[i] = EMPTY;
+                }
+            }
+        }
+        return count - remaining;
+    }
+
     /** 快照：各槽物品 id（供存档）。 */
     public int[] itemIdSnapshot() {
         return itemIds.clone();

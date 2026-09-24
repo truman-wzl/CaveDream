@@ -4,6 +4,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.ScreenAdapter;
+import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.graphics.Pixmap;
@@ -14,6 +15,7 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Disposable;
 import com.cavedream.core.CaveDreamGame;
+import com.cavedream.core.craft.Recipe;
 import com.cavedream.core.fx.Projectile;
 import com.cavedream.core.light.GameClock;
 import com.cavedream.core.light.LightEngine;
@@ -25,6 +27,7 @@ import com.cavedream.core.save.GameSave;
 import com.cavedream.core.inventory.Inventory;
 import com.cavedream.core.item.Item;
 import com.cavedream.core.player.PlayerClass;
+import com.cavedream.core.player.Equipment;
 import com.cavedream.core.player.PlayerStats;
 import com.cavedream.core.render.UiIcons;
 import com.cavedream.core.render.WoodUi;
@@ -97,6 +100,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private static final int HOTBAR = 10;                // 快捷栏格数（背包前 10 格，GDD §3.5）
     private static final int INV_TOTAL = 40;             // 背包总格（含快捷栏）：GDD §3.5 初始 40
     private final Inventory inventory = new Inventory(INV_TOTAL);
+    private final Equipment equipment = new Equipment();                     // 装备栏（武器/护甲/饰品）
+    private final java.util.List<Recipe> recipes = Recipe.starter();         // 已知配方
+    private int invTab;                                                       // E 面板页：0背包 1装备 2工作区
     private Tool tool = Tool.INITIAL;
     private float frameDelta;
     private int digX = -1, digY = -1;                    // 当前蓄力挖掘目标格
@@ -494,15 +500,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (Gdx.input.isKeyJustPressed(Input.Keys.Q)) {
             showMinimap = !showMinimap;   // Q 开关小地图
         }
-        if (showInv) {                       // 背包开启：只处理选格，不挖掘/放置/攻击
+        if (showInv) {                       // 背包开启：只处理面板内点击，不挖掘/放置/攻击
             miningNow = false;
             digProgress = 0f;
-            if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
-                int idx = invSlotAtMouse();
-                if (idx >= 0) {
-                    inventory.select(idx);
-                }
-            }
+            handleInventoryClick();
             return;
         }
         if (downed) {                          // 濒死：不可挖掘/攻击/放置（仅可移动，移速已降）
@@ -1261,29 +1262,157 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     /** 背包一行的列数与单格尺寸（相对窗口）。 */
     private static final int INV_COLS = 10;
 
-    private float invSlotSize() {
-        return uiCam.viewportHeight * 0.055f;
+    /** 背包面板（E 开合）：左侧竖排标签（背包/合成/装备与饰品）+ 右侧内容。木质公告牌。 */
+    private void drawInventory() {
+        if (!showInv) {
+            return;
+        }
+        float[] L = invLayout();
+        float slot = L[0], gap = L[1], sideW = L[2], panelW = L[5], panelH = L[6], px = L[7], py = L[8], pad = L[11];
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        WoodUi.panel(batch, pixel, px, py, panelW, panelH);
+        String[] tabs = {"背包", "合成", "装备与饰品"};
+        float tabAreaH = panelH - 2 * pad;
+        float tabH = tabAreaH / tabs.length;
+        for (int i = 0; i < tabs.length; i++) {
+            float ty = py + panelH - pad - (i + 1) * tabH;
+            WoodUi.plank(batch, pixel, px + pad, ty + 3, sideW, tabH - 6, invTab == i);
+            font.setColor(invTab == i ? Color.WHITE : new Color(0.8f, 0.76f, 0.62f, 1f));
+            font.draw(batch, tabs[i], px + pad + sideW * 0.18f, ty + tabH / 2f + 6f);
+            font.setColor(Color.WHITE);
+        }
+        if (invTab == 0) {
+            drawBagTab(L);
+        } else if (invTab == 1) {
+            drawCraftTab(L);
+        } else {
+            drawEquipTab(L);
+        }
+        batch.end();
     }
 
-    /** 第 i 格的 {x,y,size}（屏幕坐标，左上原点换算前的左下 y）。 */
-    private float[] invSlotRect(int i) {
-        float slot = invSlotSize(), gap = slot * 0.12f;
+    /** 面板统一布局（供绘制与点击共用）。 */
+    private float[] invLayout() {
+        float slot = uiCam.viewportHeight * 0.05f, gap = slot * 0.14f;
+        float sideW = slot * 3.4f;
         int rows = (INV_TOTAL + INV_COLS - 1) / INV_COLS;
         float gridW = INV_COLS * slot + (INV_COLS - 1) * gap;
         float gridH = rows * slot + (rows - 1) * gap;
-        float startX = (uiCam.viewportWidth - gridW) / 2f;
-        float topY = uiCam.viewportHeight / 2f + gridH / 2f;
-        int r = i / INV_COLS, c = i % INV_COLS;
-        float x = startX + c * (slot + gap);
-        float y = topY - (r + 1) * slot - r * gap;
-        return new float[]{x, y, slot};
+        float pad = slot * 0.5f;
+        float panelW = sideW + gap + gridW + 2 * pad;
+        float panelH = gridH + 2 * pad;
+        float px = (uiCam.viewportWidth - panelW) / 2f, py = (uiCam.viewportHeight - panelH) / 2f;
+        float cx0 = px + sideW + gap + pad, cy0 = py + panelH - pad;
+        return new float[]{slot, gap, sideW, gridW, gridH, panelW, panelH, px, py, cx0, cy0, pad};
     }
 
-    /** 鼠标命中的背包格序号；无则 -1。 */
-    private int invSlotAtMouse() {
-        float mx = uiMouseX(), my = uiMouseY();
+    private float[] bagSlotRect(int i, float[] L) {
+        float slot = L[0], gap = L[1], cx0 = L[9], cy0 = L[10];
+        int r = i / INV_COLS, c = i % INV_COLS;
+        return new float[]{cx0 + c * (slot + gap), cy0 - (r + 1) * slot - r * gap, slot};
+    }
+
+    private void drawBagTab(float[] L) {
         for (int i = 0; i < INV_TOTAL; i++) {
-            float[] r = invSlotRect(i);
+            float[] r = bagSlotRect(i, L);
+            drawSlot(r[0], r[1], r[2], inventory.itemAt(i), inventory.countAt(i), i == inventory.selected());
+        }
+    }
+
+    /** 装备页：武器1 + 护甲4 + 饰品3。 */
+    private void equipSlotRect(int i, float[] L, float[] out) {
+        float slot = L[0], gap = L[1], cx0 = L[9], cy0 = L[10];
+        // 行0：武器(居中偏左)；行1：护甲4；行2：饰品3
+        int row, col, cols;
+        if (i == Equipment.WEAPON) { row = 0; col = 0; cols = 1; }
+        else if (i < Equipment.ACC_FIRST) { row = 1; col = i - Equipment.ARMOR_FIRST; cols = 4; }
+        else { row = 2; col = i - Equipment.ACC_FIRST; cols = 3; }
+        float x = cx0 + col * (slot + gap) + (cols == 1 ? 0 : 0);
+        float y = cy0 - (row + 1) * slot - row * gap;
+        out[0] = x; out[1] = y; out[2] = slot;
+    }
+
+    private void drawEquipTab(float[] L) {
+        float[] r = new float[3];
+        String[] names = {"武器", "头盔", "战甲", "护腿", "战靴", "饰1", "饰2", "饰3"};
+        for (int i = 0; i < Equipment.SLOTS; i++) {
+            equipSlotRect(i, L, r);
+            drawSlot(r[0], r[1], r[2], equipment.get(i), 1, false);
+            font.setColor(0.7f, 0.72f, 0.85f, 1f);
+            font.draw(batch, names[i], r[0] + 2, r[1] - 4);
+            font.setColor(Color.WHITE);
+        }
+    }
+
+    /** 合成页：已解锁配方，可合成亮、缺料暗。 */
+    private float[] craftRowRect(int i, float[] L) {
+        float slot = L[0], gap = L[1], cx0 = L[9], cy0 = L[10];
+        float rowH = slot * 1.2f;
+        float w = L[3];
+        return new float[]{cx0, cy0 - (i + 1) * (rowH + gap) + gap, w, rowH};
+    }
+
+    private void drawCraftTab(float[] L) {
+        int shown = 0;
+        for (Recipe rec : recipes) {
+            if (!rec.unlocked) {
+                continue;
+            }
+            float[] r = craftRowRect(shown, L);
+            boolean ok = rec.canCraft(inventory);
+            WoodUi.plank(batch, pixel, r[0], r[1], r[2], r[3], ok);
+            batch.setColor(1, 1, 1, ok ? 1f : 0.4f);
+            batch.draw(itemSprite(rec.out), r[0] + 6, r[1] + 6, r[3] - 12, r[3] - 12);
+            font.setColor(ok ? Color.WHITE : new Color(0.6f, 0.6f, 0.6f, 1f));
+            StringBuilder sb = new StringBuilder(rec.out.cn()).append("  ←  ");
+            for (int k = 0; k < rec.inIds.length; k++) {
+                Item in = Item.byId(rec.inIds[k]);
+                int have = inventory.countOf(in);
+                sb.append(in.cn()).append(" ").append(have).append("/").append(rec.inCounts[k]);
+                if (k < rec.inIds.length - 1) {
+                    sb.append("  ");
+                }
+            }
+            font.draw(batch, sb, r[0] + r[3] + 10, r[1] + r[3] / 2f + 6f);
+            font.setColor(Color.WHITE);
+            shown++;
+        }
+    }
+
+    /** 画一个通用物品格（图标+数量+选中框）。 */
+    private void drawSlot(float x, float y, float s, Item it, int count, boolean selected) {
+        fill(x, y, s, s, 0f, 0f, 0f, 0.4f);
+        if (it != null) {
+            batch.setColor(1, 1, 1, 1);
+            batch.draw(itemSprite(it), x + s * 0.09f, y + s * 0.09f, s * 0.82f, s * 0.82f);
+            if (count > 1) {
+                font.draw(batch, String.valueOf(count), x + s * 0.12f, y + s * 0.9f);
+            }
+        }
+        if (selected) {
+            batch.setColor(1f, 1f, 0.4f, 1f);
+            border4(x, y, s, s);
+            batch.setColor(1, 1, 1, 1);
+        }
+    }
+
+    private void border4(float x, float y, float w, float h) {
+        batch.draw(pixel, x - 1, y - 1, w + 2, 2f);
+        batch.draw(pixel, x - 1, y + h - 1, w + 2, 2f);
+        batch.draw(pixel, x - 1, y - 1, 2f, h + 2);
+        batch.draw(pixel, x + w - 1, y - 1, 2f, h + 2);
+    }
+
+    /** 旧布局兼容（快捷栏命中仍用）：背包面板页 0 的格命中。 */
+    private int invSlotAtMouse() {
+        float[] L = invLayout();
+        float mx = uiMouseX(), my = uiMouseY();
+        if (invTab != 0) {
+            return -1;
+        }
+        for (int i = 0; i < INV_TOTAL; i++) {
+            float[] r = bagSlotRect(i, L);
             if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[2]) {
                 return i;
             }
@@ -1291,46 +1420,66 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return -1;
     }
 
-    /** 背包面板（E 开合）：木质公告牌 + 18 格，前 10 为快捷栏。 */
-    private void drawInventory() {
-        if (!showInv) {
+    /** 背包面板内点击路由：标签切换 / 背包选格或装备 / 装备卸回 / 工作区合成。 */
+    private void handleInventoryClick() {
+        if (!Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
             return;
         }
-        batch.setProjectionMatrix(uiCam.combined);
-        batch.begin();
-        float slot = invSlotSize(), gap = slot * 0.12f;
-        int rows = (INV_TOTAL + INV_COLS - 1) / INV_COLS;
-        float gridW = INV_COLS * slot + (INV_COLS - 1) * gap;
-        float gridH = rows * slot + (rows - 1) * gap;
-        float pad = slot * 0.5f;
-        WoodUi.panel(batch, pixel, (uiCam.viewportWidth - gridW) / 2f - pad,
-                uiCam.viewportHeight / 2f - gridH / 2f - pad, gridW + 2 * pad, gridH + 2 * pad);
-        for (int i = 0; i < INV_TOTAL; i++) {
-            float[] r = invSlotRect(i);
-            float x = r[0], y = r[1], s = r[2];
-            fill(x, y, s, s, 0f, 0f, 0f, 0.4f);
-            Item it = inventory.itemAt(i);
-            if (it != null) {
-                batch.setColor(1, 1, 1, 1);
-                batch.draw(itemSprite(it), x + s * 0.09f, y + s * 0.09f, s * 0.82f, s * 0.82f);
-                if (inventory.countAt(i) > 1) {
-                    font.draw(batch, String.valueOf(inventory.countAt(i)), x + s * 0.12f, y + s * 0.9f);
-                }
-            }
-            if (i == inventory.selected()) {
-                batch.setColor(1f, 1f, 0.4f, 1f);
-                batch.draw(pixel, x - 1, y - 1, s + 2, 2f);
-                batch.draw(pixel, x - 1, y + s - 1, s + 2, 2f);
-                batch.draw(pixel, x - 1, y - 1, 2f, s + 2);
-                batch.draw(pixel, x + s - 1, y - 1, 2f, s + 2);
-                batch.setColor(1, 1, 1, 1);
+        float[] L = invLayout();
+        float mx = uiMouseX(), my = uiMouseY();
+        float px = L[7], py = L[8], pad = L[11], sideW = L[2], panelH = L[6];
+        // 标签
+        float tabAreaH = panelH - 2 * pad, tabH = tabAreaH / 3f;
+        for (int i = 0; i < 3; i++) {
+            float ty = py + panelH - pad - (i + 1) * tabH;
+            if (mx >= px + pad && mx <= px + pad + sideW && my >= ty && my <= ty + tabH) {
+                invTab = i;
+                return;
             }
         }
-        font.setColor(0.9f, 0.9f, 1f, 1f);
-        font.draw(batch, "背包（E 关闭，左键选格）", (uiCam.viewportWidth - gridW) / 2f,
-                uiCam.viewportHeight / 2f + gridH / 2f + pad);
-        font.setColor(1, 1, 1, 1);
-        batch.end();
+        if (invTab == 0) {
+            int idx = invSlotAtMouse();
+            if (idx >= 0) {
+                Item it = inventory.itemAt(idx);
+                if (it != null && Equipment.slotFor(it) >= 0) {
+                    Item old = equipment.equip(it);
+                    inventory.remove(it, 1);
+                    if (old != null) {
+                        inventory.add(old, 1);
+                    }
+                } else {
+                    inventory.select(idx);
+                }
+            }
+        } else if (invTab == 2) {
+            float[] r = new float[3];
+            for (int i = 0; i < Equipment.SLOTS; i++) {
+                equipSlotRect(i, L, r);
+                if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[2]) {
+                    Item got = equipment.unequip(i);
+                    if (got != null && !inventory.add(got, 1)) {
+                        equipment.equip(got);   // 背包满→放回
+                    }
+                    return;
+                }
+            }
+        } else {
+            int shown = 0;
+            for (Recipe rec : recipes) {
+                if (!rec.unlocked) {
+                    continue;
+                }
+                float[] r = craftRowRect(shown, L);
+                if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[3]) {
+                    if (rec.craft(inventory)) {
+                        toast = "合成：" + rec.out.cn();
+                        toastT = 1.5f;
+                    }
+                    return;
+                }
+                shown++;
+            }
+        }
     }
 
     /** 快捷栏尺寸（相对 UI 虚拟高）与命中检测，绘制与点击共用一套。 */
