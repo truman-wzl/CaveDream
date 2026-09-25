@@ -29,6 +29,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
 
     private final CaveDreamGame game;
     private final PlayerClass playerClass;
+    private final String saveName;                     // 新游戏：该存档显示名（重绘模式不用）
     private final PaintedLook look;
     private final String titleText;
     private final java.util.function.Consumer<PaintedLook> onDone;   // 非空=重绘模式（完成后回调并返回世界）
@@ -54,10 +55,11 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
     private float doneX, doneY, doneW, doneH;
     private static final int PAL_COLS = 10;                 // 调色板每行色格数（行数按 SIZE 自适应）
 
-    /** 新游戏模式：选职业后初次捣脸，完成→生成世界。 */
-    public PaintStudioScreen(CaveDreamGame game, PlayerClass playerClass) {
+    /** 新游戏模式：选职业后初次捏脸，完成→生成世界。 */
+    public PaintStudioScreen(CaveDreamGame game, PlayerClass playerClass, String saveName) {
         this.game = game;
         this.playerClass = playerClass;
+        this.saveName = saveName == null ? "" : saveName;
         this.look = new PaintedLook();
         this.titleText = "描绘你的梦之躯";
         this.onDone = null;
@@ -69,6 +71,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
                              java.util.function.Consumer<PaintedLook> onDone) {
         this.game = game;
         this.playerClass = null;
+        this.saveName = "";
         this.look = initial.copy();
         this.titleText = title;
         this.onDone = onDone;
@@ -92,7 +95,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
             onDone.accept(look);
             game.resumeFromPaint();
         } else {
-            game.startNewDream(playerClass, look);
+            game.startNewDream(playerClass, saveName, look);
         }
     }
 
@@ -125,7 +128,8 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         btnX = palX;
         btnW = Math.min(palW, w * 0.15f);
         btnH = h * 0.05f;
-        float by = palY - rows * palCell - h * 0.03f;
+        // 按钮列整体下移到“调色板底 - 一个按钮高 - 间隙”，首按钮顶边不再探入调色板底行
+        float by = palY - rows * palCell - btnH - h * 0.025f;
         for (int i = 0; i < 5; i++) {
             btnY[i] = by - i * (btnH + h * 0.012f);
         }
@@ -269,7 +273,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         center(titleFont, titleText, w / 2f, h - 46);
         titleFont.setColor(1, 1, 1, 1);
         font.setColor(0.7f, 0.72f, 0.85f, 1f);
-        center(font, (playerClass != null ? playerClass.cn() + "　·　" : "") + "整幅画布自由上色（黑白 · 彩虹）", palX + palCell * (PAL_COLS / 2f), h - 46);
+        center(font, (playerClass != null ? playerClass.cn() + "　·　" : "") + "整幅画布自由上色（黑白 · 彩虹）", palX + palCell * (PAL_COLS / 2f), h - 76);
         font.setColor(1, 1, 1, 1);
 
         drawCanvas();

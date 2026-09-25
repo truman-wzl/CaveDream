@@ -162,6 +162,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     // —— 世界/存档/暂停 ——
     private final long seed;                                                  // 世界种子（存档用）
     private String slot;                                                      // 存档槽位文件名
+    private String saveName = "";                                             // 存档显示名（创建命名/列表改名）
     private static final int LIGHT_RADIUS = 90;                               // 局部光照重算半径（格）
     private int lightRadius = 100;                                             // 当前重算半径（随视口自适应）
     private int lastLCx = Integer.MIN_VALUE, lastLCy;                         // 上次光照重算中心
@@ -489,10 +490,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         // 铸梦币（左上、逐行下移：有仆从时让到仆从行下方，不重叠）
         font.setColor(1f, 0.9f, 0.4f, 1f);
         font.draw(batch, "铸梦币 " + coins, x, top - step * (servants.isEmpty() ? 2.9f : 4.3f));
-        // 操作提示（底部居中）
-        font.setColor(0.8f, 0.82f, 0.9f, 0.9f);
-        font.draw(batch, "E 背包・Q 小地图・F5 存档・左键使用/点快捷栏选格・右键放置",
-                uiCam.viewportWidth / 2f - 280f, uiCam.viewportHeight * 0.03f);
         font.setColor(1, 1, 1, 1);
         if (downed) {                                  // 濒死：红暗角 + 倒计时
             batch.setColor(0.45f, 0f, 0f, 0.4f);
@@ -2669,10 +2666,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         this.slot = slot;
     }
 
+    /** 设置存档显示名（新游戏创建时命名）。 */
+    public void setSaveName(String name) {
+        this.saveName = name == null ? "" : name;
+    }
+
     /** 导出当前世界为存档数据（改动 diff + 玩家状态）。 */
     public GameSave toSave() {
         GameSave s = new GameSave();
         s.slot = slot;
+        s.saveName = saveName;
         s.className = playerClass.name();
         s.seed = seed;
         s.editIdx = new int[edits.size()];
@@ -2771,6 +2774,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     public void applySave(GameSave s) {
         if (s.slot != null) {
             this.slot = s.slot;
+        }
+        if (s.saveName != null) {
+            this.saveName = s.saveName;
         }
         edits.clear();
         mountEdits.clear();

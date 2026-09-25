@@ -39,8 +39,10 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
 
     private List<GameSave> saves = new ArrayList<>();
     private int hover = -1;
+    private float elapsed;                                        // 行内文字过长时的滚动计时
     private int confirmDelete = -1;
     private static final float DEL_W = 108f;
+    private static final float RENAME_W = 84f;
 
     // 云端 cache（异步读）
     private List<Map<String, Object>> cloud = List.of();
@@ -94,8 +96,13 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
             return;
         }
         float w = cam.viewportWidth, h = cam.viewportHeight;
-        float rowH = 64f, gap = 12f, panelW = Math.min(680f, w * 0.7f);
-        float px = w / 2f - panelW / 2f;
+        elapsed += delta;
+        float rowH = 64f, gap = 12f, pad = 16f, btnGap = 10f;
+        float panelW = Math.min(560f, w * 0.52f);                 // 文字框宽（不含按钮）
+        float totalW = panelW + btnGap + RENAME_W + btnGap + DEL_W;
+        float px = w / 2f - totalW / 2f;
+        float renX = px + panelW + btnGap;                        // 改名/删除→框外右侧
+        float delX = renX + RENAME_W + btnGap;
         float rowsTop = h * 0.72f;
         List<Map<String, Object>> cloudOnly = cloudOnlyList();
         int n = saves.size();
@@ -105,18 +112,24 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
             float mx = Gdx.input.getX(), my = h - Gdx.input.getY();
             for (int i = 0; i < n; i++) {
                 float y = rowsTop - (i + 1) * (rowH + gap);
-                if (mx >= px && mx <= px + panelW && my >= y && my <= y + rowH) {
-                    float delX = px + panelW - DEL_W;
-                    if (mx >= delX) {
-                        if (confirmDelete == i) {
-                            game.deleteSave(saves.get(i).slot);
-                            saves = game.listSaves();
-                            confirmDelete = -1;
-                        } else {
-                            confirmDelete = i;
-                        }
-                        return;
+                if (my < y || my > y + rowH) {
+                    continue;
+                }
+                if (mx >= delX && mx <= delX + DEL_W) {           // 框外·删除
+                    if (confirmDelete == i) {
+                        game.deleteSave(saves.get(i).slot);
+                        saves = game.listSaves();
+                        confirmDelete = -1;
+                    } else {
+                        confirmDelete = i;
                     }
+                    return;
+                }
+                if (mx >= renX && mx <= renX + RENAME_W) {        // 框外·改名
+                    game.promptRename(saves.get(i));
+                    return;
+                }
+                if (mx >= px && mx <= px + panelW) {              // 框内·进入
                     game.continueGame(saves.get(i));
                     return;
                 }
@@ -141,7 +154,7 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
         batch.setProjectionMatrix(cam.combined);
         batch.begin();
         titleFont.setColor(0.95f, 0.9f, 0.7f, 1f);
-        center(titleFont, "选择要回到哪个梦", w / 2f, h - 70);
+        center(titleFont, "梦 之 池", w / 2f, h - 70);
         titleFont.setColor(1, 1, 1, 1);
 
         if (n == 0 && c == 0) {
@@ -155,25 +168,27 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
             float y = rowsTop - (i + 1) * (rowH + gap);
             WoodUi.plank(batch, pixel, px, y, panelW, rowH, i == hover);
             font.setColor(1, 1, 1, 1);
-            font.draw(batch, summary(saves.get(i)), px + 20, y + rowH / 2f + 7f);
-            float delX = px + panelW - DEL_W;
+            drawScroll(summary(saves.get(i)), px, y, panelW, rowH, pad, y + rowH / 2f + 7f);
+            WoodUi.plank(batch, pixel, renX, y + 8, RENAME_W, rowH - 16, false);
+            font.setColor(new Color(0.7f, 0.85f, 1f, 1f));
+            center(font, "改名", renX + RENAME_W / 2f, y + rowH / 2f + 7f);
             boolean confirming = confirmDelete == i;
-            WoodUi.plank(batch, pixel, delX + 6, y + 8, DEL_W - 12, rowH - 16, confirming);
+            WoodUi.plank(batch, pixel, delX, y + 8, DEL_W, rowH - 16, confirming);
             font.setColor(confirming ? Color.ORANGE : new Color(0.85f, 0.6f, 0.6f, 1f));
-            font.draw(batch, confirming ? "确认删除?" : "删除", delX + 22, y + rowH / 2f + 7f);
+            center(font, confirming ? "确认删除?" : "删除", delX + DEL_W / 2f, y + rowH / 2f + 7f);
             font.setColor(1, 1, 1, 1);
         }
         for (int j = 0; j < c; j++) {
             float y = rowsTop - (n + j + 1) * (rowH + gap);
             WoodUi.plank(batch, pixel, px, y, panelW, rowH, hover == n + j);
             font.setColor(0.6f, 0.85f, 1f, 1f);
-            font.draw(batch, "[云端] " + cloudSummary(cloudOnly.get(j)), px + 20, y + rowH / 2f + 7f);
+            drawScroll("[云端] " + cloudSummary(cloudOnly.get(j)), px, y, panelW, rowH, pad, y + rowH / 2f + 7f);
             font.setColor(1, 1, 1, 1);
         }
         float by = rowsTop - (n + c + 1) * (rowH + gap) - 6f;
         WoodUi.plank(batch, pixel, px, by, panelW, rowH, hover == -2);
         font.setColor(1, 1, 1, 1);
-        font.draw(batch, "返 回", px + 20, by + rowH / 2f + 7f);
+        font.draw(batch, "返 回", px + pad, by + rowH / 2f + 7f);
 
         // 状态行（云端读取/拉取中）
         if (!status.isEmpty()) {
@@ -245,6 +260,7 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
     }
 
     private static String summary(GameSave s) {
+        String name = (s.saveName == null || s.saveName.isBlank()) ? "未命名之梦" : s.saveName;
         String cn;
         try {
             cn = PlayerClass.valueOf(s.className).cn();
@@ -252,8 +268,30 @@ public class SaveListScreen extends ScreenAdapter implements Disposable {
             cn = s.className;
         }
         int hh = (s.clockMinutes / 60) % 24, mm = s.clockMinutes % 60;
-        return String.format("%s · 梦眠 %d/%d · 铸梦币 %d · 时刻 %02d:%02d",
-                cn, s.lucidity, s.maxLucidity, s.coins, hh, mm);
+        String stage = s.codexOwned ? "已得法典" : "未得法典";
+        return "「" + name + "」  " + String.format(
+                "%s · 梦眠 %d/%d · 魔能 %d/%d · 铸梦币 %d · %s · 时刻 %02d:%02d",
+                cn, s.lucidity, s.maxLucidity, s.mana, s.maxMana, s.coins, stage, hh, mm);
+    }
+
+    /** 行内文字：不超宽则静态画；超宽则用 scissor 裁剪、从右向左滚动播放。 */
+    private void drawScroll(String text, float boxX, float boxY, float boxW, float boxH, float pad, float baseY) {
+        float avail = boxW - pad * 2f;
+        measure.setText(font, text);
+        float tw = measure.width;
+        if (tw <= avail) {
+            font.draw(batch, text, boxX + pad, baseY);
+            return;
+        }
+        float loop = tw + avail + 40f;                 // 走完一遍（进右→出左）
+        float off = (elapsed * 90f) % loop;            // 滚速 90px/s
+        float tx = boxX + avail - off;
+        batch.flush();                                 // 先冲掉之前的绘制，确保下面文字在剪刀区内单独提交
+        Gdx.gl.glEnable(GL20.GL_SCISSOR_TEST);
+        Gdx.gl.glScissor((int) (boxX + pad), (int) boxY, (int) avail, (int) boxH);
+        font.draw(batch, text, tx, baseY);
+        batch.flush();
+        Gdx.gl.glDisable(GL20.GL_SCISSOR_TEST);
     }
 
     private void center(BitmapFont f, String s, float cx, float baseY) {

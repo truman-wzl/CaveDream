@@ -83,9 +83,12 @@ public class CaveDreamGame extends Game {
         setScreen(new ClassScreen(this));
     }
 
-    /** 选定职业后→进入捏脸画板（上色）。 */
-    public void showPaint(PlayerClass playerClass) {
-        setScreen(new PaintStudioScreen(this, playerClass));
+    /** 选定职业后→先命名存档（创建时命名）→再进捏脸画板。 */
+    public void nameNewDream(PlayerClass playerClass) {
+        setScreen(new com.cavedream.core.screen.NameInputScreen(this, "为你的梦命名",
+                playerClass.cn() + "之梦",
+                name -> setScreen(new PaintStudioScreen(this, playerClass, name)),
+                this::showTitle));
     }
 
     /** 法典画板：以 initial 为起点打开重绘画板，完成回调 onDone 后返回世界。 */
@@ -106,8 +109,25 @@ public class CaveDreamGame extends Game {
     }
 
     /** 捏脸完成→生成加载屏（后台生成中世界，完成进 PlayScreen）；分配一个全新存档槽。 */
-    public void startNewDream(PlayerClass playerClass, PaintedLook appearance) {
-        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance));
+    public void startNewDream(PlayerClass playerClass, String name, PaintedLook appearance) {
+        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance, name));
+    }
+
+    /** 存档列表改名：写显示名→落本地→同步云端（slot 不变、仅 save_name 变）→回列表。 */
+    public void renameSave(GameSave save, String name) {
+        save.saveName = name;
+        saveGame(save);
+        if (sessionToken != null) {
+            uploadSave(save);
+        }
+        showSaveList();
+    }
+
+    /** 弹命名屏为某存档改名（列表“改名”按钮）。 */
+    public void promptRename(GameSave save) {
+        String def = (save.saveName == null || save.saveName.isBlank()) ? save.className : save.saveName;
+        setScreen(new com.cavedream.core.screen.NameInputScreen(this, "重新命名存档", def,
+                name -> renameSave(save, name), this::showSaveList));
     }
 
     private static long freshSeed() {
@@ -236,7 +256,8 @@ public class CaveDreamGame extends Game {
             msg = "存档无槽名，跳过";
         } else {
             String json = save.toJson();
-            String name = save.className + " · " + save.coins + "币";
+            String name = (save.saveName != null && !save.saveName.isBlank())
+                    ? save.saveName : (save.className + " · " + save.coins + "币");
             String err = cloudSaves.upload(sessionToken, save.slot, name, save.seed, GAME_VERSION, json);
             msg = err == null ? "云端已同步（" + save.slot + "）" : ("云端同步失败：" + err);
         }
@@ -299,6 +320,6 @@ public class CaveDreamGame extends Game {
         if (save.faceColors != null && save.faceColors.length == PaintedLook.W * PaintedLook.H) {
             look = new PaintedLook(save.faceTemplateId, save.faceColors);
         }
-        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot, look));
+        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot, look, save.saveName));
     }
 }

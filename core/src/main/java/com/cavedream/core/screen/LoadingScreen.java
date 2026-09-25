@@ -43,6 +43,7 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
     private final GameSave save;          // 可空（新游戏）；继续游戏时携带
     private final String slot;            // 存档槽位（新游戏分配的新档名 / 继续时为原档名）
     private final PaintedLook appearance; // 捏脸上色外观（新游戏来自画板；继续时由 applySave 覆盖）
+    private final String saveName;        // 新游戏存档显示名（创建时命名）
 
     private final OrthographicCamera cam = new OrthographicCamera();
     private SpriteBatch batch;
@@ -60,13 +61,14 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
     private int flavorIdx;
 
     public LoadingScreen(CaveDreamGame game, PlayerClass playerClass, long seed, GameSave save, String slot,
-                         PaintedLook appearance) {
+                         PaintedLook appearance, String saveName) {
         this.game = game;
         this.playerClass = playerClass;
         this.seed = seed;
         this.save = save;
         this.slot = slot;
         this.appearance = appearance != null ? appearance : new PaintedLook();
+        this.saveName = saveName == null ? "" : saveName;
         batch = new SpriteBatch();
         Pixmap pm = new Pixmap(1, 1, Pixmap.Format.RGB888);
         pm.setColor(1, 1, 1, 1);
@@ -154,6 +156,7 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
             ps.applySave(save);        // 沿用原档槽位
         } else {
             ps.setSlot(slot);          // 新游戏写入分配的新槽
+            ps.setSaveName(saveName);  // 新游戏写入创建时的命名
         }
         game.setScreen(ps);
     }

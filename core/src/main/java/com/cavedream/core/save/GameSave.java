@@ -9,6 +9,7 @@ import com.badlogic.gdx.utils.Json;
 public class GameSave {
 
     public String slot;                     // 存档槽位文件名（每档一个，新建不互盖）
+    public String saveName = "";            // 存档显示名（创建时命名、列表可改名；与 slot 文件名解耦）
     public String className;
     public long seed;                       // 世界种子（long，与生成一致；截断会重建出不同地形→悬空摔落）
 

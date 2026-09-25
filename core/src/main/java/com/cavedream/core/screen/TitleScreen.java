@@ -43,7 +43,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     private static final float W = 1280f;
     private static final float H = 720f;
     private static final String SERVER = "http://localhost:8081";
-    private static final String[] MENU = {"新的梦", "继续游戏", "账号", "退出游戏"};
+    private static final String[] MENU = {"新的梦", "梦之池", "账号", "退出游戏"};
 
     private enum Mode { LOGIN, REGISTER, RESET, USER }
 
