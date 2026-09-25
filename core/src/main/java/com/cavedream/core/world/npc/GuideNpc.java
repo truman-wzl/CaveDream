@@ -19,6 +19,15 @@ public final class GuideNpc {
     private boolean codexOwned;                    // 法典是否已被购得（一次性）
     private PaintedLook look = new PaintedLook(TEMPLATE_ID);
 
+    private float homeX = Float.NaN;           // 巡逻中心（世界像素）
+    private float patrolHalf = 0f;             // 巡逻半径
+    private float dir = 1f;                     // 水平朝向
+    private float pauseT = 0f;                  // 停顿计时
+    private String bubble = "";                 // 语言泡文本
+    private float bubbleT = 0f;                 // 语言泡剩余时长
+    private float chatCd = 0f;                  // 下次冒泡冷却
+    private static final float WALK_SPEED = 26f;
+
     /** 放到某像素坐标（左下角，与怪一致）。 */
     public void place(float px, float py) {
         this.x = px;
@@ -74,5 +83,73 @@ public final class GuideNpc {
         }
         codexOwned = true;
         return true;
+    }
+
+    /* ---------------- 自由走动 + 语言泡（NPC AI） ---------------- */
+
+    /** 设定巡逻中心与半径（世界像素）。 */
+    public void setHome(float homePx, float patrolHalfPx) {
+        this.homeX = homePx;
+        this.patrolHalf = patrolHalfPx;
+    }
+
+    /** 水平巡逻：在 [home-half, home+half] 间往返、随机停顿/换向（y 由上层贴地）。 */
+    public void wander(float dt) {
+        if (patrolHalf <= 0f || Float.isNaN(homeX)) {
+            return;
+        }
+        if (pauseT > 0f) {
+            pauseT -= dt;
+            return;
+        }
+        x += dir * WALK_SPEED * dt;
+        if (x > homeX + patrolHalf) {
+            x = homeX + patrolHalf;
+            dir = -1f;
+            pauseT = nextPause();
+        } else if (x < homeX - patrolHalf) {
+            x = homeX - patrolHalf;
+            dir = 1f;
+            pauseT = nextPause();
+        } else if (Math.random() < dt * 0.12f) {
+            dir = -dir;
+            pauseT = nextPause();
+        }
+    }
+
+    private static float nextPause() {
+        return 0.6f + (float) Math.random() * 1.8f;
+    }
+
+    public float facing() {
+        return dir;
+    }
+
+    public void say(String line, float dur) {
+        bubble = line == null ? "" : line;
+        bubbleT = dur;
+    }
+
+    public boolean talking() {
+        return bubbleT > 0f;
+    }
+
+    public String bubble() {
+        return bubble;
+    }
+
+    /** 每帧计时：语言泡与冷却递减；当 engaged（相处够久）且冷却到点→返回 true 表示该冒一句新闲聊。 */
+    public boolean tickChat(float dt, boolean engaged) {
+        if (bubbleT > 0f) {
+            bubbleT -= dt;
+        }
+        if (chatCd > 0f) {
+            chatCd -= dt;
+        }
+        if (engaged && chatCd <= 0f) {
+            chatCd = 5f + (float) Math.random() * 4f;
+            return true;
+        }
+        return false;
     }
 }

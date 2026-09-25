@@ -96,6 +96,20 @@ public final class ItemDrop {
         }
     }
 
+    /** 磁吸飞行：直接朝目标平移、**忽略世界碰撞**（可穿墙），避免卡在墙后收不到。 */
+    public void glideTo(float tx, float ty, float speed, float dt) {
+        dt = Math.min(dt, 1f / 30f);
+        age += dt;
+        float cx = x + SIZE / 2f, cy = y + SIZE / 2f;
+        float dx = tx - cx, dy = ty - cy;
+        float len = (float) Math.hypot(dx, dy);
+        if (len > 0.001f) {
+            float step = Math.min(len, speed * dt);
+            x += dx / len * step;
+            y += dy / len * step;
+        }
+    }
+
     public float x() {
         return x;
     }

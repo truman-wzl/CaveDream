@@ -31,6 +31,7 @@ public class GameSave {
     public int coins;                       // 铸梦币
     public int servantCap;                  // 召唤师仆从上限（存上限不存当前数；重进存档需重新召唤）
     public boolean codexOwned;              // 是否已向构梦者购得《世界准则法典》（一次性）
+    public boolean guidePresent;            // 构梦者是否已现身（一旦现身就常驻，不因铸梦币下降而消失）
 
     public int faceTemplateId;              // 捏脸画板模板 id（0=梦之主）
     public int[] faceColors = new int[0];   // 玩家上色的外观（每格 ARGB，882 格）
@@ -41,6 +42,14 @@ public class GameSave {
     public int[] chestCap = new int[0];        // 对应容量（变长，按此累加偏移切分下面两数组）
     public int[] chestItem = new int[0];       // 拼接：各容器逐格物品 id（-1 空）
     public int[] chestCount = new int[0];      // 拼接：对应数量
+
+    public int[] paintItemId = new int[0];     // 被重绘外观的物品 id
+    public int[] paintW = new int[0];          // 对应画布宽
+    public int[] paintH = new int[0];          // 对应画布高
+    public int[] paintColors = new int[0];     // 拼接：各物品逐格 ARGB（按 w*h 切分）
+
+    public int[] mountIdx = new int[0];        // 墙面对象（火把等）格索引
+    public int[] mountBlock = new int[0];      // 对应墙面对象 block id
 
     public String toJson() {
         Json json = new Json();

@@ -71,6 +71,38 @@ public final class UiIcons implements Disposable {
         return t;
     }
 
+    /** 物品图标（武器/工具）的 CPU 端 ARGB（SIZE×SIZE），供法典画板按自身贴图起始；方块/未知返回 null。 */
+    public static int[] iconArgb(Item it) {
+        Pixmap pm = iconPixmap(it);
+        if (pm == null) {
+            return null;
+        }
+        int[] a = new int[SIZE * SIZE];
+        for (int y = 0; y < SIZE; y++) {
+            for (int x = 0; x < SIZE; x++) {
+                int p = pm.getPixel(x, y);          // RGBA8888：r<<24|g<<16|b<<8|a
+                int r = (p >> 24) & 0xFF, g = (p >> 16) & 0xFF, b = (p >> 8) & 0xFF, al = p & 0xFF;
+                a[y * SIZE + x] = (al << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        pm.dispose();
+        return a;
+    }
+
+    private static Pixmap iconPixmap(Item it) {
+        int id = it.id();
+        if (id >= 100 && id <= 105) {
+            return pickaxePixmap();
+        }
+        if (id >= 110 && id <= 115) {
+            return axePixmap();
+        }
+        if (id >= 200 && id <= 204) {
+            return weaponPixmap(PlayerClass.values()[id - 200]);
+        }
+        return null;
+    }
+
     private static Pixmap canvas() {
         Pixmap pm = new Pixmap(SIZE, SIZE, Pixmap.Format.RGBA8888);
         pm.setBlending(Pixmap.Blending.None);
@@ -86,6 +118,10 @@ public final class UiIcons implements Disposable {
     }
 
     private static Texture buildWeapon(PlayerClass c) {
+        return toTexture(weaponPixmap(c));
+    }
+
+    private static Pixmap weaponPixmap(PlayerClass c) {
         Pixmap pm = canvas();
         int wood = 0x8A5A2B, metal = 0xC8CDD8, leaf = 0x4C8A3E, glow = 0x8E7CC3, dark = 0x2A2140;
         switch (c) {
@@ -135,10 +171,14 @@ public final class UiIcons implements Disposable {
                 px(pm, 10, 9, 0xFFFFFF, 160);
             }
         }
-        return toTexture(pm);
+        return pm;
     }
 
     private static Texture buildPickaxe() {
+        return toTexture(pickaxePixmap());
+    }
+
+    private static Pixmap pickaxePixmap() {
         Pixmap pm = canvas();
         int wood = 0x8A5A2B, head = 0xB8BCC6;
         for (int i = 5; i < 20; i++) {                 // 斜柄
@@ -150,10 +190,14 @@ public final class UiIcons implements Disposable {
             px(pm, x, y, head, 255);
             px(pm, x, y - 1, head, 255);
         }
-        return toTexture(pm);
+        return pm;
     }
 
     private static Texture buildAxe() {
+        return toTexture(axePixmap());
+    }
+
+    private static Pixmap axePixmap() {
         Pixmap pm = canvas();
         int wood = 0x8A5A2B, head = 0xB8BCC6;
         for (int i = 5; i < 21; i++) {                 // 斜柄
@@ -166,7 +210,7 @@ public final class UiIcons implements Disposable {
                 }
             }
         }
-        return toTexture(pm);
+        return pm;
     }
 
     private static void fillCircle(Pixmap pm, int cx, int cy, int r, int rgb) {

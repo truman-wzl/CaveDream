@@ -107,6 +107,11 @@ public enum BlockType {
         return this == WOOD_WALL;
     }
 
+    /** 可作为“墙面对象”挂到背景墙/实心墙上的非实体装饰（当前：火把）。 */
+    public boolean wallMountable() {
+        return this == TORCH;
+    }
+
     /** 摆放占地宽（格）：木箱 2、桌子/工作台 2，其余 1。 */
     public int footprintW() {
         return (this == CHEST || this == TABLE || this == WORKBENCH) ? 2 : 1;

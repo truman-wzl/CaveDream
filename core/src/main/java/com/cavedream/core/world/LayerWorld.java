@@ -9,6 +9,7 @@ public final class LayerWorld {
     private final int width;
     private final int height;
     private final short[] tiles;
+    private final short[] mounts;   // 墙面对象第二层（火把等），0=无
 
     private int spawnTileX;
     private int spawnTileY;   // 出生点 = 玩家脚所站的空气格（其下方一格为实心）
@@ -20,6 +21,7 @@ public final class LayerWorld {
         this.width = width;
         this.height = height;
         this.tiles = new short[width * height];   // 默认全 AIR
+        this.mounts = new short[width * height];   // 默认无墙面对象
     }
 
     public boolean inBounds(int x, int y) {
@@ -53,6 +55,20 @@ public final class LayerWorld {
     /** 该格是否阻挡敌怪（实体或门）；越界=true（雾墙安全网）。 */
     public boolean blocksMob(int x, int y) {
         return !inBounds(x, y) || blockAt(x, y).blocksMobs();
+    }
+
+    /** 墙面对象（第二层）：贴于背景墙/实心墙上的非实体装饰（火把等）；无则 AIR。 */
+    public BlockType mountAt(int x, int y) {
+        if (!inBounds(x, y)) {
+            return BlockType.AIR;
+        }
+        return BlockType.of(mounts[y * width + x]);
+    }
+
+    public void setMount(int x, int y, BlockType type) {
+        if (inBounds(x, y)) {
+            mounts[y * width + x] = type.id();
+        }
     }
 
     public int getWidth() {

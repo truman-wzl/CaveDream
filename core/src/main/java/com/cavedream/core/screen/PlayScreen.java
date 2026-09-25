@@ -90,9 +90,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private TextureRegion guideRegion;
     private boolean shopOpen;                                               // 商店面板开合
     private boolean codexMenuOpen;                                          // 法典菜单开合（按 X）
+    private int codexView;                                                  // 法典视图：0主菜单 1 NPC列表 2 物品列表
+    private final java.util.Map<Integer, PaintedLook> itemPaints = new java.util.HashMap<>();   // itemId→重绘外观
+    private final java.util.Map<Integer, Texture> itemPaintTex = new java.util.HashMap<>();     // 重绘外观的缓存纹理
     private final java.util.HashMap<Integer, Inventory> chests = new java.util.HashMap<>();   // 木箱内容 tileIdx→背包
     private int openChest = -1;                                             // 打开的容器 tileIdx，-1 无
+    private final java.util.HashMap<Integer, Integer> mountEdits = new java.util.HashMap<>();   // 墙面对象改动 idx→blockId（持久）
     private volatile String guideLine = "";                                 // 构梦者台词（大模型生成）
+    private float guideEngageT;                                             // 与构梦者相处计时（≥3s 触发闲聊）
+    private volatile boolean chatterLoading;                                // 闲聊生成中（避免并发）
     private volatile boolean lineLoading;
     private final java.util.List<String> storyLog = new java.util.ArrayList<>();   // 本存档“剧情记忆”（随每次交互增长）
     private TextureRegion blobRegion;
@@ -206,6 +212,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         coinRegion = new TextureRegion(textures.coin());
         int[] gs = VillageBuilder.build(world, spawnTileX, spawnTileY, seed);   // 出生点旁建村庄，得向导落点
         guide.place(gs[0] * (float) TILE, gs[1] * (float) TILE);
+        guide.setHome(gs[0] * (float) TILE, TILE * 3f);   // 以落点为中心、左右各 3 格自由走动
         guideTex = new Texture(lookPixmap(guide.look().colors));
         guideTex.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
         guideRegion = new TextureRegion(guideTex);
@@ -254,8 +261,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     @Override
     public void render(float delta) {
-        if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
-            paused = !paused;   // ESC 弹菜单并暂停（怪/伤害一并冻结）
+        if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)
+                && !showInv && !shopOpen && !codexMenuOpen && openChest < 0) {
+            paused = !paused;   // 无面板时才用 ESC 弹暂停菜单（面板开着时 ESC 由面板自己处理）
         }
         frameDelta = delta;
         if (toastT > 0f) {
@@ -278,6 +286,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             } else {
                 walkPhase = 0f;
             }
+            int fallDmg = player.consumeFallDamage();   // 摔落伤害（开局无保护→高空坠落可致命）
+            if (fallDmg > 0) {
+                stats.damage(fallDmg);
+                toast = "摔落受伤 −" + fallDmg;
+                toastT = 1.6f;
+            }
             updateCamera();
             clock.update(delta);
             daylight0to15 = clock.daylightLevel0to15();
@@ -290,6 +304,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             updateProjectiles(delta);
             updateServants(delta);
             updateGuide();
+            updateGuideNpc(delta);
             if (slashT > 0f) {
                 slashT -= delta;
             }
@@ -340,6 +355,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawCodexMenu();
         drawChest();
         drawToast();
+        drawGuideBubble();
     }
 
     /** 光照：以相机为中心、覆盖整个视口+余量的方框重算（避免未算区域变黑）；脏或相机移动过大时触发。 */
@@ -576,18 +592,20 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (Gdx.input.isKeyJustPressed(Input.Keys.Q)) {
             showMinimap = !showMinimap;   // Q 开关小地图
         }
-        if (Gdx.input.isKeyJustPressed(Input.Keys.X)) {        // X 开法典（需已购得）
+        if (Gdx.input.isKeyJustPressed(Input.Keys.X)) {        // X 随处开/关法典（需已购得），独立于背包
             if (guide.codexOwned()) {
                 codexMenuOpen = !codexMenuOpen;
+                codexView = 0;
             } else {
                 toast = "尚未拥有《世界准则法典》（去构梦者商店）";
                 toastT = 1.5f;
             }
+            return;   // 本次 X 只做开合，避免同帧又被 handleCodexClick 处理
         }
-        if (showInv) {                       // 背包开启：只处理面板内点击，不挖掘/放置/攻击
+        if (codexMenuOpen) {                 // 法典优先（可随处 X 打开，独立于背包）
             miningNow = false;
             digProgress = 0f;
-            handleInventoryClick();
+            handleCodexClick();
             return;
         }
         if (shopOpen) {                      // 商店开启：只处理商店点击
@@ -596,10 +614,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             handleShopClick();
             return;
         }
-        if (codexMenuOpen) {                 // 法典菜单开启：只处理其点击
+        if (showInv) {                       // 背包开启：只处理面板内点击，不挖掘/放置/攻击
             miningNow = false;
             digProgress = 0f;
-            handleCodexClick();
+            handleInventoryClick();
             return;
         }
         if (openChest >= 0) {                // 木箱开启：只处理存取
@@ -678,7 +696,11 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 digProgress += frameDelta / Math.max(0.03f, need);
                 mining = true;
                 if (digProgress >= 1f) {
-                    breakBlock(tile[0], tile[1], b);   // 多格家具整体破坏、掉 1
+                    if (world.mountAt(tile[0], tile[1]) != BlockType.AIR) {
+                        popMount(tile[0], tile[1]);   // 先摘墙面对象，不伤墙
+                    } else {
+                        breakBlock(tile[0], tile[1], b);   // 多格家具整体破坏、掉 1
+                    }
                     digProgress = 0f;
                     digX = -1;
                     digY = -1;
@@ -711,7 +733,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         // 右键：放置方块（支持多格家具）/ 交互
         if (Gdx.input.isButtonJustPressed(Input.Buttons.RIGHT) && tile != null
                 && held != null && held.placeable()) {
-            placeBlock(tile[0], tile[1], held.block());
+            if (!tryMount(tile[0], tile[1], held.block())) {
+                placeBlock(tile[0], tile[1], held.block());
+            }
         }
     }
 
@@ -732,6 +756,82 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
+    /** 构梦者自由走动（贴地巡逻）+ 与玩家相处≥3s 周期性冒语言泡。 */
+    private void updateGuideNpc(float dt) {
+        if (!guide.present()) {
+            return;
+        }
+        guide.wander(dt);
+        // 贴地：从脚下向下找第一格实心/平台
+        int tx = (int) Math.floor((guide.x() + TILE * 0.65f) / TILE);
+        int ty = (int) Math.floor((guide.y() + 2f) / TILE);
+        int ground = -1;
+        for (int y = ty; y >= ty - 6 && y >= 0; y--) {
+            if (world.blockAt(tx, y).solid() || world.isPlatform(tx, y)) {
+                ground = y;
+                break;
+            }
+        }
+        if (ground >= 0) {
+            guide.place(guide.x(), (ground + 1) * (float) TILE);
+        }
+        guideEngageT = nearGuide() ? guideEngageT + dt : 0f;
+        if (guide.tickChat(dt, guideEngageT >= 3f)) {
+            askGuideChatter();
+        }
+    }
+
+    private static final String[] GUIDE_IDLE = {
+            "今天梦里也很安静呢。", "你见过会发光的鱼吗？", "构梦，就是织一场醒不来的梦。",
+            "这村庄的风，带着一点旧记忆。", "要是累了，就坐下歇会儿吧。", "传说深处有扇门，通往没做过的梦。",
+            "铸梦币叮当作响，那是梦的心跳。", "别怕黑，黑里才看得见星。",
+    };
+
+    /** 构梦者主动闲聊：优先大模型异步生成，离线直接随机梦呓。 */
+    private void askGuideChatter() {
+        final String fb = GUIDE_IDLE[(int) (Math.random() * GUIDE_IDLE.length)];
+        if (game.npcDialogue() == null || !game.npcDialogue().available() || chatterLoading) {
+            guide.say(fb, 4.5f);   // 离线/生成中：直接随机梦呓
+            return;
+        }
+        chatterLoading = true;
+        final boolean owned = guide.codexOwned();
+        final String mem = storyMemory();
+        new Thread(() -> {
+            String line = game.npcDialogue().reply(
+                    game.npcDialogue().guidePersona(owned, mem),
+                    "（你正闲逛，随口说一句轻松的梦呓，不超过两句。）", fb);
+            guide.say(line, 4.5f);
+            chatterLoading = false;
+        }, "cavedream-chatter").start();
+    }
+
+    /** 构梦者头顶语言泡（世界坐标→UI 屏幕绘制）。 */
+    private void drawGuideBubble() {
+        if (!guide.present() || !guide.talking()) {
+            return;
+        }
+        com.badlogic.gdx.math.Vector3 p = new com.badlogic.gdx.math.Vector3(
+                guide.x() + TILE * 0.65f, guide.y() + TILE * 2.7f, 0);
+        camera.project(p);   // 世界→屏幕真实像素（y 自底）
+        float sx = p.x * (uiCam.viewportWidth / Gdx.graphics.getWidth());
+        float sy = p.y * (uiCam.viewportHeight / Gdx.graphics.getHeight());
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        String txt = guide.bubble();
+        float maxW = uiCam.viewportWidth * 0.34f;
+        com.badlogic.gdx.graphics.g2d.GlyphLayout gl = new com.badlogic.gdx.graphics.g2d.GlyphLayout(
+                font, txt, Color.WHITE, maxW, com.badlogic.gdx.utils.Align.center, true);
+        float bw = gl.width + 20f, bh = gl.height + 16f;
+        float bx = clamp(sx - bw / 2f, 6f, uiCam.viewportWidth - bw - 6f);
+        float by = clamp(sy, 6f, uiCam.viewportHeight - bh - 6f);
+        WoodUi.panel(batch, pixel, bx, by, bw, bh);
+        font.setColor(Color.WHITE);
+        font.draw(batch, gl, bx + 10f, by + bh - 9f);
+        font.setColor(1, 1, 1, 1);
+        batch.end();
+    }
+
     /** 玩家是否在构梦者交互范围内。 */
     private boolean nearGuide() {
         if (!guide.present()) {
@@ -747,7 +847,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             return;
         }
         batch.setColor(1, 1, 1, 1);
-        batch.draw(guideRegion, guide.x(), guide.y(), TILE * 1.3f, TILE * 2.6f);
+        float gw = TILE * 1.3f, gh = TILE * 2.6f;
+        if (guide.facing() < 0f) {   // 朝左→水平镜像（底模默认朝右）
+            batch.draw(guideRegion, guide.x() + gw, guide.y(), 0f, 0f, gw, gh, -1f, 1f, 0f);
+        } else {
+            batch.draw(guideRegion, guide.x(), guide.y(), gw, gh);
+        }
     }
 
     private float[] shopRect() {
@@ -831,6 +936,11 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return String.join("；", storyLog.subList(from, storyLog.size()));
     }
 
+    /** block id 是否在合法范围（读档防未知 id 使 BlockType.of 抛异常）。 */
+    private static boolean isValidBlock(int id) {
+        return id >= 0 && id < BlockType.values().length;
+    }
+
     private static int[] slice(int[] src, int from, int len) {
         int[] out = new int[len];
         java.util.Arrays.fill(out, Inventory.EMPTY);
@@ -871,45 +981,207 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.begin();
         WoodUi.panel(batch, pixel, x, y, w, h);
         font.setColor(0.95f, 0.9f, 0.7f, 1f);
-        font.draw(batch, "世界准则法典 · 造梦画板", x + 16, y + h - 26);
+        font.draw(batch, codexView == 0 ? "世界准则法典 · 造梦画板"
+                : codexView == 1 ? "选择要重塑的 NPC" : "选择要重塑的物品", x + 16, y + h - 26);
         font.setColor(1, 1, 1, 1);
-        String[] rows = {"重塑 · 梦迹行者样貌", "重塑 · 方块画板（开发中）", "重塑 · 武器画板（开发中）"};
         float mx = uiMouseX(), my = uiMouseY();
-        for (int i = 0; i < rows.length; i++) {
-            float[] r = codexRowRect(i);
-            boolean hov = mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[3];
-            WoodUi.plank(batch, pixel, r[0], r[1], r[2], r[3], hov && i == 0);
-            font.setColor(i == 0 ? Color.WHITE : new Color(0.55f, 0.55f, 0.62f, 1f));
-            font.draw(batch, rows[i], r[0] + 14, r[1] + r[3] / 2f + 6);
-            font.setColor(1, 1, 1, 1);
+        if (codexView == 0) {
+            String[] rows = {"修改已有 NPC 外观", "修改已有物品外观"};
+            for (int i = 0; i < rows.length; i++) {
+                float[] r = codexRowRect(i);
+                boolean hov = mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[3];
+                WoodUi.plank(batch, pixel, r[0], r[1], r[2], r[3], hov);
+                font.setColor(Color.WHITE);
+                font.draw(batch, rows[i], r[0] + 14, r[1] + r[3] / 2f + 6);
+                font.setColor(1, 1, 1, 1);
+            }
+        } else if (codexView == 1) {
+            drawNpcPicker(mx, my);
+        } else {
+            drawItemPicker(mx, my);
         }
         font.setColor(0.7f, 0.72f, 0.85f, 1f);
-        font.draw(batch, "X / Esc 关闭", x + 16, y + 24);
+        font.draw(batch, codexView == 0 ? "X / Esc 关闭" : "Esc 返回列表", x + 16, y + 24);
         font.setColor(1, 1, 1, 1);
         batch.end();
     }
 
+    /** NPC 选择列表（当前：构梦者）：头像格 + 悬浮名。 */
+    private void drawNpcPicker(float mx, float my) {
+        String[] names = npcNames();
+        float slot = uiCam.viewportHeight * 0.09f;
+        float[] c = codexRect();
+        float left = c[0] + 24, top = c[1] + c[3] - 56;
+        for (int i = 0; i < names.length; i++) {
+            float cx = left + i * (slot + 12), cy = top - slot;
+            boolean hov = mx >= cx && mx <= cx + slot && my >= cy && my <= cy + slot;
+            WoodUi.plank(batch, pixel, cx, cy, slot, slot, hov);
+            batch.draw(guideRegion, cx + 4, cy + 4, slot - 8, slot - 8);
+            font.setColor(Color.WHITE);
+            font.draw(batch, names[i], cx, cy - 12);
+            font.setColor(1, 1, 1, 1);
+            if (hov) {
+                codexTooltip(names[i], "点击重塑它的样貌", mx, my);
+            }
+        }
+    }
+
+    /** 物品选择列表（网格 + 悬浮名）：点一个→重绘其外观。 */
+    private void drawItemPicker(float mx, float my) {
+        java.util.List<Item> items = paintableItems();
+        float slot = uiCam.viewportHeight * 0.06f, gap = slot * 0.16f;
+        int cols = 6;
+        float[] c = codexRect();
+        float left = c[0] + 24, top = c[1] + c[3] - 52;
+        for (int i = 0; i < items.size(); i++) {
+            int r = i / cols, col = i % cols;
+            float cx = left + col * (slot + gap), cy = top - (r + 1) * slot - r * gap;
+            Item it = items.get(i);
+            boolean hov = mx >= cx && mx <= cx + slot && my >= cy && my <= cy + slot;
+            fill(cx, cy, slot, slot, 0f, 0f, 0f, 0.4f);
+            batch.setColor(1, 1, 1, 1);
+            batch.draw(itemSprite(it), cx + slot * 0.1f, cy + slot * 0.1f, slot * 0.8f, slot * 0.8f);
+            if (itemPaints.containsKey(it.id())) {
+                batch.setColor(0.4f, 1f, 0.5f, 1f);   // 已重绘→绿角标
+                batch.draw(pixel, cx + slot - 5, cy + slot - 5, 5, 5);
+                batch.setColor(1, 1, 1, 1);
+            }
+            if (hov) {
+                codexTooltip(it.cn(), itemPaints.containsKey(it.id()) ? "已重塑·点击再改" : "点击重塑外观", mx, my);
+            }
+        }
+    }
+
+    /** 选择器通用悬浮小窗（标题 + 一行说明）。 */
+    private void codexTooltip(String title, String hint, float mx, float my) {
+        float w = uiCam.viewportHeight * 0.24f, hh = uiCam.viewportHeight * 0.08f;
+        float bx = mx + 12, by = my + 8;
+        if (bx + w > uiCam.viewportWidth) {
+            bx = mx - w - 12;
+        }
+        if (by + hh > uiCam.viewportHeight) {
+            by = uiCam.viewportHeight - hh;
+        }
+        WoodUi.panel(batch, pixel, bx, by, w, hh);
+        font.setColor(Color.WHITE);
+        font.draw(batch, title, bx + 8, by + hh * 0.66f);
+        font.setColor(0.7f, 0.72f, 0.85f, 1f);
+        font.draw(batch, hint, bx + 8, by + hh * 0.24f);
+        font.setColor(1, 1, 1, 1);
+    }
+
+    /** 可重绘物品：所有可放置方块 + 五职业武器 + 代表工具。 */
+    private java.util.List<Item> paintableItems() {
+        java.util.List<Item> list = new java.util.ArrayList<>();
+        for (BlockType b : BlockType.values()) {
+            if (b != BlockType.AIR && b != BlockType.FOG && b != BlockType.WATER) {
+                list.add(Item.ofBlock(b));
+            }
+        }
+        for (int id : new int[]{200, 201, 202, 203, 204, 100, 110}) {
+            list.add(Item.byId(id));
+        }
+        return list;
+    }
+
+    /** 可重绘 NPC 名单（当前：构梦者）。 */
+    private String[] npcNames() {
+        return new String[]{"构梦者"};
+    }
+
     private void handleCodexClick() {
-        if (Gdx.input.isKeyJustPressed(Input.Keys.X) || Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
+            if (codexView == 0) {
+                codexMenuOpen = false;
+            } else {
+                codexView = 0;
+            }
+            return;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.X) && codexView == 0) {
             codexMenuOpen = false;
             return;
         }
-        if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
-            float mx = uiMouseX(), my = uiMouseY();
-            for (int i = 0; i < 3; i++) {
+        if (!Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
+            return;
+        }
+        float mx = uiMouseX(), my = uiMouseY();
+        if (codexView == 0) {
+            for (int i = 0; i < 2; i++) {
                 float[] r = codexRowRect(i);
                 if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[3]) {
-                    if (i == 0) {
-                        codexMenuOpen = false;
-                        game.openPaint(appearance, "重塑 · 梦迹行者样貌", this::applyRepaint);
-                    } else {
-                        toast = "该画板开发中";
-                        toastT = 1.5f;
+                    codexView = i + 1;
+                    return;
+                }
+            }
+        } else if (codexView == 1) {
+            String[] names = npcNames();
+            float slot = uiCam.viewportHeight * 0.09f;
+            float[] c = codexRect();
+            float left = c[0] + 24, top = c[1] + c[3] - 56;
+            for (int i = 0; i < names.length; i++) {
+                float cx = left + i * (slot + 12), cy = top - slot;
+                if (mx >= cx && mx <= cx + slot && my >= cy && my <= cy + slot) {
+                    codexMenuOpen = false;
+                    codexView = 0;
+                    game.openPaint(guide.look(), "重塑 · " + names[i], this::applyGuideRepaint);
+                    return;
+                }
+            }
+        } else {
+            java.util.List<Item> items = paintableItems();
+            float slot = uiCam.viewportHeight * 0.06f, gap = slot * 0.16f;
+            int cols = 6;
+            float[] c = codexRect();
+            float left = c[0] + 24, top = c[1] + c[3] - 52;
+            for (int i = 0; i < items.size(); i++) {
+                int r = i / cols, col = i % cols;
+                float cx = left + col * (slot + gap), cy = top - (r + 1) * slot - r * gap;
+                if (mx >= cx && mx <= cx + slot && my >= cy && my <= cy + slot) {
+                    Item it = items.get(i);
+                    PaintedLook seed = itemPaints.get(it.id());
+                    if (seed == null) {
+                        seed = defaultItemLook(it);
                     }
+                    final int id = it.id();
+                    codexMenuOpen = false;
+                    codexView = 0;
+                    game.openPaint(seed, "重塑 · " + it.cn(), look -> applyItemPaint(id, look));
                     return;
                 }
             }
         }
+    }
+
+    /** 应用物品重绘：存 PaintedLook + 重建缓存纹理（下次 itemSprite 优先用它）。 */
+    private void applyItemPaint(int itemId, PaintedLook look) {
+        itemPaints.put(itemId, look);
+        Texture old = itemPaintTex.remove(itemId);
+        if (old != null) {
+            old.dispose();
+        }
+        Pixmap pm = lookPixmap(look.w, look.h, look.colors);
+        Texture t = new Texture(pm);
+        t.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
+        pm.dispose();
+        itemPaintTex.put(itemId, t);
+        toast = "物品外观已重塑";
+        toastT = 2f;
+    }
+
+    /** 物品默认外观画布：取该物品自身贴图（方块/币 16×16、武器/工具 24×24）作起始。 */
+    private PaintedLook defaultItemLook(Item it) {
+        if (it.kind() == Item.Kind.COIN) {
+            return PaintedLook.forItem(16, 16, BlockTextures.coinArgb());
+        }
+        if (it.placeable()) {
+            return PaintedLook.forItem(16, 16, BlockTextures.blockArgb(it.block()));
+        }
+        int[] a = UiIcons.iconArgb(it);
+        if (a != null) {
+            return PaintedLook.forItem(UiIcons.SIZE, UiIcons.SIZE, a);
+        }
+        return PaintedLook.forItem(16, 16, BlockTextures.blockArgb(BlockType.WOOD));
     }
 
     /** 重绘完成：应用新外观并重建小人纹理（在 GL 线程回调）。 */
@@ -918,6 +1190,20 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         buildDreamer();
         logStory("以法典重塑了自己的样貌");
         toast = "样貌已重塑";
+        toastT = 2f;
+    }
+
+    /** 法典·重塑已有 NPC：重绘构梦者外观并重建其纹理。 */
+    private void applyGuideRepaint(PaintedLook look) {
+        guide.setLook(look);
+        if (guideTex != null) {
+            guideTex.dispose();
+        }
+        guideTex = new Texture(lookPixmap(look.colors));
+        guideTex.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
+        guideRegion = new TextureRegion(guideTex);
+        logStory("以法典重塑了构梦者的样貌");
+        toast = "构梦者样貌已重塑";
         toastT = 2f;
     }
 
@@ -1082,6 +1368,37 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         lightDirty = true;
     }
 
+    /** 把墙面对象（火把）挂到 (x,y) 的背景墙/实心墙上；成功返回 true（消耗 1 个）。 */
+    private boolean tryMount(int x, int y, BlockType b) {
+        if (!b.wallMountable()) {
+            return false;
+        }
+        BlockType behind = world.blockAt(x, y);
+        if (!(behind.backgroundWall() || behind.solid())) {
+            return false;   // 需有墙可挂
+        }
+        if (world.mountAt(x, y) != BlockType.AIR) {
+            return false;   // 已挂对象
+        }
+        world.setMount(x, y, b);
+        mountEdits.put(y * world.getWidth() + x, (int) b.id());
+        inventory.takeSelectedOne();
+        lightDirty = true;
+        return true;
+    }
+
+    /** 摘下墙面对象（掉回物品、清第二层）。 */
+    private void popMount(int x, int y) {
+        BlockType m = world.mountAt(x, y);
+        if (m == BlockType.AIR) {
+            return;
+        }
+        world.setMount(x, y, BlockType.AIR);
+        mountEdits.put(y * world.getWidth() + x, (int) BlockType.AIR.id());
+        spawnDrop(x, y, Item.ofBlock(m));
+        lightDirty = true;
+    }
+
     /** 从 (x,y) 反推 b 的左下角锚点（扫描 footprint 候选，取四角全为 b 者）。 */
     private int[] anchorOf(int x, int y, BlockType b) {
         int fw = b.footprintW(), fh = b.footprintH();
@@ -1114,6 +1431,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 if (world.inBounds(cx, cy) && world.blockAt(cx, cy) == b) {
                     world.setBlock(cx, cy, BlockType.AIR);
                     edits.put(cy * w + cx, (int) BlockType.AIR.id());
+                    if (world.mountAt(cx, cy) != BlockType.AIR) {   // 连带摘除墙上对象
+                        world.setMount(cx, cy, BlockType.AIR);
+                        mountEdits.put(cy * w + cx, (int) BlockType.AIR.id());
+                    }
                 }
             }
         }
@@ -1155,6 +1476,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 float px = x * (float) TILE, py = y * (float) TILE;
                 batch.setColor(1, 1, 1, 1);
                 batch.draw(tileRegion(b, x, y), px, py, TILE, TILE);
+                BlockType mo = world.mountAt(x, y);
+                if (mo != BlockType.AIR) {
+                    batch.draw(tileRegion(mo, x, y), px, py, TILE, TILE);   // 墙面对象叠在墙上
+                }
                 if (b == BlockType.FOG) {
                     continue;   // 雾界自成一体，不叠加地形容错
                 }
@@ -1426,9 +1751,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             ItemDrop d = drops.get(i);
             float dx = d.centerX() - pcx, dy = d.centerY() - pcy;
             if (dx * dx + dy * dy < PICKUP_MAGNET_PX * PICKUP_MAGNET_PX) {
-                d.seek(pcx, pcy, MAGNET_SPEED);
+                d.glideTo(pcx, pcy, MAGNET_SPEED, dt);   // 磁吸：穿墙飞向玩家
+            } else {
+                d.update(world, dt);                      // 未磁吸：正常重力/碰撞
             }
-            d.update(world, dt);
             if (d.overlapsRect(player.x(), player.y(), player.width(), player.height())) {
                 if (d.item().kind() == Item.Kind.COIN) {   // 铸梦币→直接入账，不占背包
                     coins += d.count();
@@ -1815,8 +2141,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
     }
 
-    /** 物品图标：可放置方块用其贴图，否则按 id 取镐/斧/职业武器图。 */
+    /** 物品图标：优先用玩家重绘外观；否则可放置方块用其贴图，否则按 id 取镐/斧/职业武器图。 */
     private TextureRegion itemSprite(Item it) {
+        Texture pt = itemPaintTex.get(it.id());
+        if (pt != null) {
+            return new TextureRegion(pt);
+        }
         if (it.kind() == Item.Kind.COIN) {
             return coinRegion;
         }
@@ -2366,6 +2696,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         s.coins = coins;
         s.servantCap = servantCap;
         s.codexOwned = guide.codexOwned();
+        s.guidePresent = guide.present();
         s.faceTemplateId = appearance.templateId;
         s.faceColors = appearance.colors.clone();
         s.storyLog = storyLog.toArray(new String[0]);
@@ -2392,6 +2723,47 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         s.chestCap = cCap;
         s.chestItem = cItem;
         s.chestCount = cCount;
+        int pn = itemPaints.size();
+        int[] pId = new int[pn];
+        int[] pW = new int[pn];
+        int[] pH = new int[pn];
+        int ptotal = 0;
+        for (PaintedLook pl : itemPaints.values()) {
+            ptotal += pl.colors.length;
+        }
+        int[] pC = new int[ptotal];
+        int pk = 0, poff = 0;
+        for (java.util.Map.Entry<Integer, PaintedLook> e : itemPaints.entrySet()) {
+            PaintedLook pl = e.getValue();
+            pId[pk] = e.getKey();
+            pW[pk] = pl.w;
+            pH[pk] = pl.h;
+            System.arraycopy(pl.colors, 0, pC, poff, pl.colors.length);
+            poff += pl.colors.length;
+            pk++;
+        }
+        s.paintItemId = pId;
+        s.paintW = pW;
+        s.paintH = pH;
+        s.paintColors = pC;
+        int mn = 0;
+        for (int v : mountEdits.values()) {
+            if (v != 0) {
+                mn++;
+            }
+        }
+        int[] mIdx = new int[mn];
+        int[] mBlk = new int[mn];
+        int mk = 0;
+        for (java.util.Map.Entry<Integer, Integer> e : mountEdits.entrySet()) {
+            if (e.getValue() != 0) {
+                mIdx[mk] = e.getKey();
+                mBlk[mk] = e.getValue();
+                mk++;
+            }
+        }
+        s.mountIdx = mIdx;
+        s.mountBlock = mBlk;
         return s;
     }
 
@@ -2401,12 +2773,16 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             this.slot = s.slot;
         }
         edits.clear();
+        mountEdits.clear();
         if (s.editIdx != null && s.editBlock != null) {
             int w = world.getWidth();
             for (int i = 0; i < s.editIdx.length && i < s.editBlock.length; i++) {
                 int idx = s.editIdx[i], b = s.editBlock[i];
-                world.setBlock(idx % w, idx / w, BlockType.of((short) b));
-                edits.put(idx, b);
+                int tx = idx % w, ty = idx / w;
+                if (world.inBounds(tx, ty) && isValidBlock(b)) {   // 越界/未知 id 跳过（防崩）
+                    world.setBlock(tx, ty, BlockType.of((short) b));
+                    edits.put(idx, b);
+                }
             }
         }
         player.setPos(s.playerX, s.playerY);
@@ -2423,16 +2799,43 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (s.storyLog != null) {
             java.util.Collections.addAll(storyLog, s.storyLog);   // 恢复本梦的记忆
         }
-        guide.setCodexOwned(s.codexOwned);   // 法典已购→不重复出售（present 由 coins≥阈值自动恢复）
+        guide.setCodexOwned(s.codexOwned);   // 法典已购→不重复出售
+        guide.setPresent(s.guidePresent);    // 构梦者一旦现身就常驻（不靠 coins 阈值重新判定）
         chests.clear();
         if (s.chestTile != null && s.chestCap != null) {
             int off = 0;
-            for (int j = 0; j < s.chestTile.length; j++) {
+            for (int j = 0; j < s.chestTile.length && j < s.chestCap.length; j++) {
                 int cap = s.chestCap[j];
-                Inventory ch = new Inventory(Math.max(1, cap));
-                ch.loadFrom(slice(s.chestItem, off, cap), slice(s.chestCount, off, cap), 0);
+                int alloc = Math.max(1, Math.min(cap, 512));   // 异常容量钳制，防 OOM
+                Inventory ch = new Inventory(alloc);
+                ch.loadFrom(slice(s.chestItem, off, alloc), slice(s.chestCount, off, alloc), 0);
                 chests.put(s.chestTile[j], ch);
-                off += cap;
+                off += cap;   // 按原始 cap 前进，与序列化对齐
+            }
+        }
+        if (s.paintItemId != null && s.paintColors != null && s.paintW != null && s.paintH != null
+                && s.paintW.length == s.paintItemId.length && s.paintH.length == s.paintItemId.length) {
+            int off = 0;
+            for (int j = 0; j < s.paintItemId.length; j++) {
+                int pw = s.paintW[j], ph = s.paintH[j];
+                int len = pw * ph;
+                if (pw <= 0 || ph <= 0 || len <= 0 || off + len > s.paintColors.length) {
+                    break;   // 尺寸/数据不一致（旧档无 paintW 或损坏）→安全跳过
+                }
+                PaintedLook look = PaintedLook.forItem(pw, ph, slice(s.paintColors, off, len));
+                applyItemPaint(s.paintItemId[j], look);
+                off += len;
+            }
+        }
+        if (s.mountIdx != null && s.mountBlock != null) {
+            int mw = world.getWidth();
+            for (int i = 0; i < s.mountIdx.length && i < s.mountBlock.length; i++) {
+                int idx = s.mountIdx[i], mb = s.mountBlock[i];
+                int tx = idx % mw, ty = idx / mw;
+                if (world.inBounds(tx, ty) && isValidBlock(mb)) {
+                    world.setMount(tx, ty, BlockType.of((short) mb));
+                    mountEdits.put(idx, mb);
+                }
             }
         }
         if (s.faceColors != null && s.faceColors.length == PaintedLook.W * PaintedLook.H) {
@@ -2456,7 +2859,11 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     }
 
     private static Pixmap lookPixmap(int[] colors) {
-        Pixmap pm = new Pixmap(PaintedLook.W, PaintedLook.H, Pixmap.Format.RGBA8888);
+        return lookPixmap(PaintedLook.W, PaintedLook.H, colors);
+    }
+
+    private static Pixmap lookPixmap(int w, int h, int[] colors) {
+        Pixmap pm = new Pixmap(w, h, Pixmap.Format.RGBA8888);
         pm.setBlending(Pixmap.Blending.None);
         pm.setColor(0, 0, 0, 0);
         pm.fill();
@@ -2467,7 +2874,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
             pm.setColor(((v >> 16) & 0xFF) / 255f, ((v >> 8) & 0xFF) / 255f, (v & 0xFF) / 255f,
                     ((v >>> 24) & 0xFF) / 255f);
-            pm.drawPixel(i % PaintedLook.W, i / PaintedLook.W);
+            pm.drawPixel(i % w, i / w);
         }
         return pm;
     }

@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS t_cloud_sync_log (
     KEY idx_account_time (account_id, synced_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '同步流水（排查与统计用）';
 
+-- 会话持久化：token → 账号，重启不失效（修“后端重启→内存 token 清空→云存档列表变空”）。
+CREATE TABLE IF NOT EXISTS t_session (
+    token      VARCHAR(64) NOT NULL,
+    account_id BIGINT      NOT NULL,
+    created_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (token),
+    KEY idx_sess_account (account_id),
+    CONSTRAINT fk_sess_account FOREIGN KEY (account_id) REFERENCES t_account (id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '登录会话（持久化，重启不失效）';
+
 -- 存量库自动迁移：旧表补密保列（重复执行报 1060 重复列，由 continue-on-error 忽略）
 ALTER TABLE t_account ADD COLUMN sec_question VARCHAR(128) NOT NULL DEFAULT '' AFTER salt;
 ALTER TABLE t_account ADD COLUMN sec_answer   VARCHAR(128) NOT NULL DEFAULT '' AFTER sec_question;

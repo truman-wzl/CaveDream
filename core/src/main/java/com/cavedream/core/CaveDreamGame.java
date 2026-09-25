@@ -28,7 +28,7 @@ public class CaveDreamGame extends Game {
     private boolean fullscreen = false;   // 默认窗口化启动（与 Main 一致）；F11 首次按下切全屏
 
     /** 云存档：会话 token（登录写入 session.json、重启自动读回）+ 版本 + 客户端。 */
-    public static final String GAME_VERSION = "0.49";
+    public static final String GAME_VERSION = "0.51";
     private String sessionToken;
     private String sessionNick;
     private volatile String lastCloudMsg;                                 // 上次云存档结果（主菜单回显）
@@ -289,7 +289,12 @@ public class CaveDreamGame extends Game {
 
     /** 继续指定存档：加载屏按存档种子重建中世界，进 PlayScreen 后套用改动/状态（沿用原槽）。 */
     public void continueGame(GameSave save) {
-        PlayerClass pc = PlayerClass.valueOf(save.className);
+        PlayerClass pc;
+        try {
+            pc = PlayerClass.valueOf(save.className);   // 旧档/损坏职业名→兜底（装备仍从背包恢复）
+        } catch (Exception e) {
+            pc = PlayerClass.WARRIOR;
+        }
         PaintedLook look = new PaintedLook();
         if (save.faceColors != null && save.faceColors.length == PaintedLook.W * PaintedLook.H) {
             look = new PaintedLook(save.faceTemplateId, save.faceColors);

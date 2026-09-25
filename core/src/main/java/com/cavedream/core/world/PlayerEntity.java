@@ -14,6 +14,11 @@ public final class PlayerEntity {
     private static final float MAX_FALL = 700f;
     private static final float EPS = 0.01f;
 
+    /** 摔落伤害参数：超过安全格数后每格扣血、单次封顶（开局无保护→高空坠落可致命）。 */
+    public static final float SAFE_FALL_TILES = 8f;   // 8 格内不受伤（普通跳跃≈5.5 格不受影响）
+    public static final float FALL_DMG_PER_TILE = 6f; // 每超 1 格 6 点
+    public static final int FALL_DMG_CAP = 100;       // 单次上限（足以从天空岛坠亡）
+
     private float x;
     private float y;
     /** 碰撞盒定稿（GDD §2.4/Q9，v0.17）：宽 1.3 格 × 高 2.6 格，1 格竖井不可穿过 */
@@ -27,6 +32,10 @@ public final class PlayerEntity {
     /** 面向：1 右 / -1 左（贴图默认朝右，渲染时据此镜像） */
     private int facing = 1;
 
+    private float peakY;              // 本次腾空最高点（算坠落距离）
+    private boolean airborne;         // 是否腾空
+    private int pendingFallDamage;    // 落地结算出的坠落伤害（待上层取用）
+
     public PlayerEntity(float x, float y) {
         this.x = x;
         this.y = y;
@@ -38,6 +47,9 @@ public final class PlayerEntity {
         this.y = ny;
         this.vx = 0f;
         this.vy = 0f;
+        this.airborne = false;
+        this.peakY = ny;
+        this.pendingFallDamage = 0;
     }
 
     /** 移速倍率（濒死降速）。 */
@@ -107,6 +119,31 @@ public final class PlayerEntity {
                 }
             }
         }
+
+        // 摔落伤害：腾空记峰值，落地按坠落高度结算（伤害由上层 stats.damage 应用）
+        if (onGround) {
+            if (airborne) {
+                float fallTiles = (peakY - y) / TILE;
+                if (fallTiles > SAFE_FALL_TILES) {
+                    pendingFallDamage = Math.min(
+                            (int) ((fallTiles - SAFE_FALL_TILES) * FALL_DMG_PER_TILE), FALL_DMG_CAP);
+                }
+                airborne = false;
+            }
+            peakY = y;
+        } else if (!airborne) {
+            airborne = true;
+            peakY = y;
+        } else if (y > peakY) {
+            peakY = y;
+        }
+    }
+
+    /** 取出并清零本帧落地结算的坠落伤害（无则 0）。 */
+    public int consumeFallDamage() {
+        int d = pendingFallDamage;
+        pendingFallDamage = 0;
+        return d;
     }
 
     /** 碰撞盒覆盖的所有 tile 是否有实心。 */

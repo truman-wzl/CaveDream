@@ -76,4 +76,38 @@ class PlayerEntityTest {
         assertThat(player.overlapsTile(6, 10)).isTrue();
         assertThat(player.overlapsTile(20, 20)).isFalse();
     }
+
+    /** 高世界：地面同高但上方留更多坠落空间（测封顶伤害）。 */
+    private static LayerWorld tallWorld() {
+        LayerWorld world = new LayerWorld(32, 80);
+        for (int x = 0; x < 32; x++) {
+            for (int y = 0; y < 10; y++) {
+                world.setBlock(x, y, BlockType.STONE);
+            }
+        }
+        return world;
+    }
+
+    @Test
+    void shortFallShouldNotHurt() {
+        LayerWorld world = flatWorld();
+        PlayerEntity player = new PlayerEntity(100f, 220f);   // 落至 160 ≈ 3.75 格 < 安全 8 格
+        for (int i = 0; i < 200; i++) {
+            player.update(world, false, false, false, 1 / 60f);
+        }
+        assertThat(player.isOnGround()).isTrue();
+        assertThat(player.consumeFallDamage()).isZero();
+    }
+
+    @Test
+    void tallFallShouldDealCappedDamage() {
+        LayerWorld world = tallWorld();
+        PlayerEntity player = new PlayerEntity(100f, 900f);   // 落至 160 ≈ 46 格 → 封顶
+        for (int i = 0; i < 400; i++) {
+            player.update(world, false, false, false, 1 / 60f);
+        }
+        assertThat(player.isOnGround()).isTrue();
+        assertThat(player.consumeFallDamage()).isEqualTo(PlayerEntity.FALL_DMG_CAP);
+        assertThat(player.consumeFallDamage()).as("取用后应清零").isZero();
+    }
 }

@@ -422,7 +422,7 @@ public final class BlockTextures implements Disposable {
     private static final int D_W = 21;
     private static final int D_H = 42;
 
-    /** 卡通像素小人：Q 版大头、圆脸闭眼、腮红小鼻、长袍前臂、双腿错位 + 1px 自动描边。 */
+    /** 梦之主像素小人（21×42 Q 版大头）：刘海盖额、大眼、腮红、背后一束飘逸长发 + 头顶呆毛，长袍前臂、双腿错位 + 1px 自动描边。 */
     private static Pixmap paintDreamer() {
         final int skin = 0xF0D0A8, skinShade = 0xD8B088, blush = 0xE8A0A0;
         final int hair = 0x4A3670, hairHi = 0x5D458A;
@@ -477,20 +477,32 @@ public final class BlockTextures implements Disposable {
                                     int pants, int pantsD, int shoe, int eye) {
         double hdx = x - 9.5, hdy = y - 11;
         boolean inHead = hdx * hdx + hdy * hdy <= 46.0;
+        // 呆毛：头顶翘起的一小撮，显得更有活力
+        if ((x == 8 || x == 9 || x == 10) && y >= 1 && y <= 3) {
+            return (x == 9 && y <= 2) ? hairHi : hair;
+        }
         if (inHead) {
-            if (y <= 8.5 || (y <= 12.5 && x <= 6.5)) {
-                return (y >= 7 && y <= 8 && x >= 8 && x <= 11) ? hairHi : hair;
+            // 刘海盖住额头（年轻不秃），右侧再垂一缕鬄发
+            if (y <= 10.5 || (y <= 13.0 && x <= 6.0) || (x >= 12 && x <= 13 && y <= 10.5)) {
+                return (y >= 6 && y <= 7 && x >= 9 && x <= 13) ? hairHi : hair;
             }
-            if (y >= 11 && y < 12.4 && x >= 12 && x <= 14) {
-                return eye;
+            if (y >= 11.5 && y < 13.5 && x >= 11 && x <= 13.5) {
+                return eye;                                   // 偏大的眼显年轻
             }
-            if (x >= 15 && x <= 16 && y >= 11.5 && y <= 13) {
+            if (x >= 15 && x <= 16 && y >= 12 && y <= 13) {
                 return skinShade;
             }
-            if (x >= 12.5 && x <= 14 && y >= 13.5 && y <= 14.5) {
+            if (x >= 12.5 && x <= 14 && y >= 14 && y <= 15) {
                 return blush;
             }
             return skin;
+        }
+        // 飘逸长发：沿背后（画面左侧）垂下一束，越往下越收
+        if (y >= 12 && y <= 27) {
+            double right = 5.2 - (y - 12) * 0.16;
+            if (x >= 1 && x <= right) {
+                return (x <= 2.5 && y <= 18) ? hairHi : hair;
+            }
         }
         if (y >= 15.5 && y < 17 && x >= 8.5 && x <= 11.5) {
             return skin;
@@ -512,7 +524,7 @@ public final class BlockTextures implements Disposable {
             return arm;
         }
         if (Math.pow(x - 13.5, 2) + Math.pow(y - 25.6, 2) <= 3.2) {
-            return skin;
+            return arm;                                    // 手归袖色→上肢（便于大分区快填）
         }
         if (y >= 28 && y < 38.5) {
             if (x >= 8.5 && x <= 12) {
@@ -587,6 +599,21 @@ public final class BlockTextures implements Disposable {
             case 0x2E2E40: return 8;                              // 鞋子
             default: return 0;                                    // 描边/其它→不作可涂区域
         }
+    }
+
+    /** 方块默认 16×16 贴图 ARGB（取 sheet 左上格），供法典画板按物品自身贴图起始。 */
+    public static int[] blockArgb(BlockType b) {
+        int[] sheet = paintSheetArgb(b);
+        int[] t = new int[TILE * TILE];
+        for (int y = 0; y < TILE; y++) {
+            System.arraycopy(sheet, y * SHEET, t, y * TILE, TILE);
+        }
+        return t;
+    }
+
+    /** 铸梦币默认 16×16 贴图 ARGB。 */
+    public static int[] coinArgb() {
+        return paintCoinArgb();
     }
 
     /* ---------------- 工具 ---------------- */

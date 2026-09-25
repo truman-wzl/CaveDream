@@ -24,8 +24,8 @@ import com.cavedream.core.render.WoodUi;
  */
 public class PaintStudioScreen extends ScreenAdapter implements Disposable {
 
-    private static final int MODE_PEN = 0, MODE_ERASE = 1, MODE_FILL = 2;
-    private static final String[] MODE_NAMES = {"画笔", "橡皮", "填块"};
+    private static final int MODE_PEN = 0, MODE_ERASE = 1, MODE_FILL = 2, MODE_PART = 3;
+    private static final String[] MODE_NAMES = {"画笔", "橡皮", "填块", "部位"};
 
     private final CaveDreamGame game;
     private final PlayerClass playerClass;
@@ -49,7 +49,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
     // 布局缓存（render 计算、输入用）
     private float cell, canvasX, canvasY, canvasW, canvasH;
     private float palX, palY, palCell;
-    private final float[] btnY = new float[4];
+    private final float[] btnY = new float[5];
     private float btnX, btnW, btnH;
     private float doneX, doneY, doneW, doneH;
     private static final int PAL_COLS = 10;                 // 调色板每行色格数（行数按 SIZE 自适应）
@@ -110,9 +110,9 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
 
     private void computeLayout() {
         float w = cam.viewportWidth, h = cam.viewportHeight;
-        cell = Math.min(h * 0.72f / PaintedLook.H, w * 0.4f / PaintedLook.W);
-        canvasW = cell * PaintedLook.W;
-        canvasH = cell * PaintedLook.H;
+        cell = Math.min(h * 0.72f / look.h, w * 0.4f / look.w);
+        canvasW = cell * look.w;
+        canvasH = cell * look.h;
         canvasX = w * 0.08f;
         canvasY = h / 2f - canvasH / 2f;
         // 调色板：PAL_COLS 列×自适应行（黑白灰阶 + 彩虹）
@@ -126,13 +126,13 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         btnW = Math.min(palW, w * 0.15f);
         btnH = h * 0.05f;
         float by = palY - rows * palCell - h * 0.03f;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
             btnY[i] = by - i * (btnH + h * 0.012f);
         }
         doneW = btnW;
         doneH = h * 0.06f;
         doneX = btnX;
-        doneY = btnY[3] - doneH - h * 0.02f;
+        doneY = btnY[4] - doneH - h * 0.02f;
     }
 
     @Override
@@ -159,6 +159,9 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.NUM_3)) {
             mode = MODE_FILL;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.NUM_4)) {
+            mode = MODE_PART;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.R)) {
             look.reset();
@@ -195,10 +198,10 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
                 mode = MODE_PEN;                 // 选色即回到画笔
                 return;
             }
-            // 按钮：模式×3 + 重置
-            for (int i = 0; i < 4; i++) {
+            // 按钮：模式×4 + 重置
+            for (int i = 0; i < 5; i++) {
                 if (inRect(mx, my, btnX, btnY[i], btnW, btnH)) {
-                    if (i < 3) {
+                    if (i < 4) {
                         mode = i;
                     } else {
                         look.reset();
@@ -227,18 +230,24 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
 
     private void paintAt(float mx, float my) {
         int gx = (int) ((mx - canvasX) / cell);
-        int gy = PaintedLook.H - 1 - (int) ((my - canvasY) / cell);   // 数据 y 向下
-        if (gx < 0 || gy < 0 || gx >= PaintedLook.W || gy >= PaintedLook.H) {
+        int gy = look.h - 1 - (int) ((my - canvasY) / cell);   // 数据 y 向下
+        if (gx < 0 || gy < 0 || gx >= look.w || gy >= look.h) {
             return;
         }
         if (mode == MODE_PEN) {
             look.paint(gx, gy, Palette.COLORS[colorIdx]);
         } else if (mode == MODE_ERASE) {
             look.erase(gx, gy);
-        } else {
-            byte r = look.regions()[gy * PaintedLook.W + gx];
+        } else if (mode == MODE_FILL) {
+            byte r = look.regions()[gy * look.w + gx];
             if (r != PaintedLook.R_OUT) {
                 look.fillRegion(r, Palette.COLORS[colorIdx]);
+            }
+        } else {                                  // MODE_PART：按大分区（头/身/上肢/下肢）整片填
+            byte r = look.regions()[gy * look.w + gx];
+            int part = PaintedLook.partOf(r);
+            if (part >= 0) {
+                look.fillPart(part, Palette.COLORS[colorIdx]);
             }
         }
     }
@@ -269,8 +278,8 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
 
         smallFont.setColor(0.6f, 0.62f, 0.75f, 1f);
         center(smallFont, onDone != null
-                ? "1 画笔　2 橡皮　3 填块　R 重置　Enter 完成并返回　Esc 放弃返回"
-                : "1 画笔　2 橡皮　3 填块　R 重置　Enter 完成并进入梦境　Esc 返回", w / 2f, 34);
+                ? "1 画笔　2 橡皮　3 填块(细部位)　4 部位(头/身/上/下肢)　R 重置　Enter 完成并返回　Esc 放弃返回"
+                : "1 画笔　2 橡皮　3 填块(细部位)　4 部位(头/身/上/下肢)　R 重置　Enter 完成并进入梦境　Esc 返回", w / 2f, 34);
         smallFont.setColor(1, 1, 1, 1);
     }
 
@@ -278,11 +287,11 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         // 木质边框
         WoodUi.panel(batch, pixel, canvasX - 10, canvasY - 10, canvasW + 20, canvasH + 20);
         int[] c = look.colors;
-        for (int y = 0; y < PaintedLook.H; y++) {
-            for (int x = 0; x < PaintedLook.W; x++) {
-                int v = c[y * PaintedLook.W + x];
+        for (int y = 0; y < look.h; y++) {
+            for (int x = 0; x < look.w; x++) {
+                int v = c[y * look.w + x];
                 float px = canvasX + x * cell;
-                float py = canvasY + (PaintedLook.H - 1 - y) * cell;
+                float py = canvasY + (look.h - 1 - y) * cell;
                 // 全黑底、非黑为人（纯黑=透明键）；直接按颜色画
                 batch.setColor(((v >> 16) & 0xFF) / 255f, ((v >> 8) & 0xFF) / 255f, (v & 0xFF) / 255f, 1f);
                 batch.draw(pixel, px, py, cell, cell);
@@ -290,10 +299,10 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         }
         // 淡网格线（在黑底上标出格子，便于对齐造型）
         batch.setColor(1f, 1f, 1f, 0.06f);
-        for (int x = 0; x <= PaintedLook.W; x++) {
+        for (int x = 0; x <= look.w; x++) {
             batch.draw(pixel, canvasX + x * cell, canvasY, 1f, canvasH);
         }
-        for (int y = 0; y <= PaintedLook.H; y++) {
+        for (int y = 0; y <= look.h; y++) {
             batch.draw(pixel, canvasX, canvasY + y * cell, canvasW, 1f);
         }
         batch.setColor(1, 1, 1, 1);
@@ -318,15 +327,15 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
     }
 
     private void drawButtons() {
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             WoodUi.plank(batch, pixel, btnX, btnY[i], btnW, btnH, mode == i);
             font.setColor(mode == i ? Color.WHITE : new Color(0.8f, 0.75f, 0.6f, 1f));
             center(font, MODE_NAMES[i], btnX + btnW / 2f, btnY[i] + btnH * 0.35f);
             font.setColor(1, 1, 1, 1);
         }
-        WoodUi.plank(batch, pixel, btnX, btnY[3], btnW, btnH, false);
+        WoodUi.plank(batch, pixel, btnX, btnY[4], btnW, btnH, false);
         font.setColor(0.8f, 0.75f, 0.6f, 1f);
-        center(font, "重置", btnX + btnW / 2f, btnY[3] + btnH * 0.35f);
+        center(font, "重置", btnX + btnW / 2f, btnY[4] + btnH * 0.35f);
         font.setColor(1, 1, 1, 1);
 
         WoodUi.plank(batch, pixel, doneX, doneY, doneW, doneH, true);

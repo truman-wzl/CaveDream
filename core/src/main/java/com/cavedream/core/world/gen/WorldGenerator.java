@@ -207,7 +207,11 @@ public final class WorldGenerator {
         }
         int anchorX = (int) clamp(W / 2.0 + (rnd.nextDouble() * 0.3 - 0.15) * W, 120, W - 120);
         int mainTopY = surfTop + (int) ((H - surfTop) * 0.45);
-        carveIsland(w, anchorX, mainTopY, Math.max(60, W / 60), Math.max(10, H / 120), H);
+        int mainRx = Math.max(60, W / 60);
+        carveIsland(w, anchorX, mainTopY, mainRx, Math.max(10, H / 120), H);
+
+        // ---------- 7b 浮岛顶植树（天空岛不再光秃；跳过主浮岛=出生/入梦锤所在，不埋出生点） ----------
+        plantIslandTrees(w, rnd, surfTop, H, anchorX - mainRx, anchorX + mainRx);
 
         // ---------- 8 地狱带 Boss 竞技场 ----------
         int ax = W / 2;
@@ -421,7 +425,11 @@ public final class WorldGenerator {
     }
 
     private static void tree(LayerWorld w, Random rnd, int[] ground, int x) {
-        int g = ground[x];
+        treeAt(w, rnd, x, ground[x]);
+    }
+
+    /** 以 (x, g) 处草地为基植一棵树（g 为该格 GRASS 的 y）；非草则跳过。 */
+    private static void treeAt(LayerWorld w, Random rnd, int x, int g) {
         if (w.blockAt(x, g) != BlockType.GRASS) {
             return;
         }
@@ -438,6 +446,24 @@ public final class WorldGenerator {
                 if (nx > 2 && nx < w.getWidth() - 3 && ny < w.getHeight() - 3
                         && w.blockAt(nx, ny) == BlockType.AIR) {
                     w.setBlock(nx, ny, BlockType.LEAF);
+                }
+            }
+        }
+    }
+
+    /** 扫描天空带各列的浮岛顶（草+上方空气），按概率点缀树木；[skipX0,skipX1] 为主浮岛，跳过。 */
+    private static void plantIslandTrees(LayerWorld w, Random rnd, int surfTop, int H, int skipX0, int skipX1) {
+        int yLo = Math.max(6, surfTop + 8);
+        for (int x = 6; x < w.getWidth() - 6; x++) {
+            if (x >= skipX0 && x <= skipX1) {
+                continue;   // 主浮岛留空，不埋出生点
+            }
+            for (int y = yLo; y < H - 6; y++) {
+                if (w.blockAt(x, y) == BlockType.GRASS && w.blockAt(x, y + 1) == BlockType.AIR) {
+                    if (rnd.nextInt(5) == 0) {
+                        treeAt(w, rnd, x, y);
+                    }
+                    break;   // 该列只认最下一个岛顶，避免堆叠
                 }
             }
         }
