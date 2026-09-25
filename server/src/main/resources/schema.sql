@@ -18,9 +18,9 @@ CREATE TABLE IF NOT EXISTS t_account (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '玩家账号';
 
 -- 云存档无限槽：按账号 + 字符串槽名 keying（与本地 save-*.json 一一对应）。
--- 旧版固定 1~5 槽→直接重建（本地为权威、云端仅备份，重建无数据损失）。
-DROP TABLE IF EXISTS t_cloud_sync_log;
-DROP TABLE IF EXISTS t_save_slot;
+-- ⚠ 绝不能在此 DROP t_save_slot / t_cloud_sync_log：它们含用户云存档数据，
+--   而 spring.sql.init.mode=always 会让本脚本每次启动都执行——DROP 会清空全部云档
+--   （正是“云存档每次自动消失”的根因）。只建不删，靠 IF NOT EXISTS 幂等。
 
 CREATE TABLE IF NOT EXISTS t_save_slot (
     id               BIGINT      NOT NULL AUTO_INCREMENT,
