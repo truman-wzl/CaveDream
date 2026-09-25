@@ -45,6 +45,9 @@ import com.cavedream.core.world.mob.Slime;
 import com.cavedream.core.world.mob.SpawnManager;
 import com.cavedream.core.world.gen.VillageBuilder;
 import com.cavedream.core.world.npc.GuideNpc;
+import com.cavedream.core.anim.BoneId;
+import com.cavedream.core.anim.Pose;
+import com.cavedream.core.render.SkeletalAvatar;
 
 /**
  * L1 浅梦箱庭游玩界面（M2 垂直切片）：可走、可跳、可挖、可放。
@@ -111,6 +114,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private TextureRegion pickaxeRegion;
     private TextureRegion coinRegion;
     private TextureRegion treeRegion;
+    // —— 骨骼蒙皮角色 ——
+    private SkeletalAvatar avatar;
+    private final Pose avatarPose = new Pose();
+    private float avatarPhase;
+    private float pvBob, pvTilt, pvW, pvH;
+    private int pvFacing = 1;
     private BlockType holdBlock = BlockType.DIRT;
     private final Vector3 mouseWorld = new Vector3();
     private final float[] dust = new float[90 * 3];   // x, y, 相位
@@ -216,6 +225,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         uiIcons = new UiIcons();
         sky = new SkyRenderer();
         buildDreamer();
+        avatar = new SkeletalAvatar();
+        avatar.setAppearance(appearance);
         pickaxeRegion = new TextureRegion(textures.pickaxe());
         coinRegion = new TextureRegion(textures.coin());
         treeRegion = new TextureRegion(textures.tree());
@@ -351,6 +362,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawMobs();
         drawGuide();
         drawDrops();
+        batch.end();
+        updatePlayerVisual();
+        if (avatar != null) {
+            avatar.draw(camera, player.x(), player.y() + pvBob, pvW, pvH, pvFacing, pvTilt);
+        }
+        batch.setProjectionMatrix(camera.combined);
+        batch.begin();
         drawPlayer();
         renderProjectiles();
         renderServants();
@@ -2119,6 +2137,57 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return textures.region(b, x, y);
     }
 
+    /** 计算角色视觉参数（bob/tilt/facing/尺寸）+ 程序化姿态，交给蒙皮渲染。 */
+    private void updatePlayerVisual() {
+        pvW = player.width();
+        pvH = player.height();
+        pvFacing = player.facing();
+        boolean walking = player.isMoving() && player.isOnGround();
+        boolean swimming = player.isInWater();
+        if (swimming) {
+            pvBob = (float) Math.sin(time * 4f) * 1.8f;
+            pvTilt = pvFacing > 0 ? 80f : -80f;
+        } else if (walking) {
+            pvBob = (float) Math.abs(Math.sin(walkPhase)) * 2.2f;
+            pvTilt = (float) Math.sin(walkPhase) * 3f;
+        } else if (!player.isOnGround()) {
+            pvBob = 0f;
+            pvTilt = pvFacing > 0 ? 6f : -6f;
+        } else {
+            pvBob = 0f;
+            pvTilt = 0f;
+        }
+        if (walking) {
+            avatarPhase += frameDelta * 9f;
+        } else {
+            avatarPhase = 0f;
+        }
+        buildAvatarPose(walking);
+        if (avatar != null) {
+            avatar.applyPose(avatarPose);
+        }
+    }
+
+    /** 程序化姿态：待机呼吸 + 走路四肢摆动（前臂/双腿反相）。一次性动作后续由 Animator/overlay 接管。 */
+    private void buildAvatarPose(boolean walking) {
+        avatarPose.reset();
+        float breath = (float) Math.sin(time * 2f);
+        avatarPose.setBone(BoneId.SPINE, breath * 1.2f, 0, 0, 1, 1);
+        avatarPose.setBone(BoneId.HEAD, -breath * 1.6f, 0, 0, 1, 1);
+        if (walking) {
+            float sw = (float) Math.sin(avatarPhase);
+            float amp = 26f;
+            avatarPose.setBone(BoneId.THIGH_F, sw * amp, 0, 0, 1, 1);
+            avatarPose.setBone(BoneId.THIGH_B, -sw * amp, 0, 0, 1, 1);
+            avatarPose.setBone(BoneId.SHIN_F, Math.max(0f, -sw) * amp * 0.7f, 0, 0, 1, 1);
+            avatarPose.setBone(BoneId.SHIN_B, Math.max(0f, sw) * amp * 0.7f, 0, 0, 1, 1);
+            avatarPose.setBone(BoneId.ARM_FB, -sw * amp * 0.6f, 0, 0, 1, 1);
+            avatarPose.setBone(BoneId.ARM_UB, sw * amp * 0.6f, 0, 0, 1, 1);
+        } else {
+            avatarPose.setBone(BoneId.ARM_FB, -4f + breath * 2f, 0, 0, 1, 1);
+        }
+    }
+
     private void drawPlayer() {
         float w = player.width();
         float h = player.height();
@@ -2160,13 +2229,6 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 : swing.angle(rest, facing);                                 // 武器/工具：静止握持角 + 头顶→身前下挥砍弧
         float gx = player.centerX() + facing * w * gripF;
         batch.draw(hand, gx - ps / 2f, gy, ps / 2f, 0f, ps, ps, facing, 1f, rot);
-        // 侧脸身体贴图默认朝右；scaleX=facing 镜像，tilt 为小幅旋转（身体盖在握柄上→更像手持）
-        if (stats.isInvulnerable()) {                        // 受击无敌帧→闪白
-            batch.setColor(1f, 0.55f, 0.55f, 1f);
-        } else {
-            batch.setColor(1, 1, 1, 1);
-        }
-        batch.draw(dreamerRegion, player.x(), player.y() + bob, w / 2, h / 2, w, h, facing, 1, tilt);
         batch.setColor(1, 1, 1, 1);
     }
 
@@ -3474,6 +3536,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         dreamerTex = t;
         dreamerRegion = new TextureRegion(t);
+        if (avatar != null) {
+            avatar.setAppearance(appearance);   // 重绘/读档后同步蒙皮皮肤
+        }
     }
 
     private static Pixmap lookPixmap(int[] colors) {
@@ -3509,6 +3574,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         if (guideTex != null) {
             guideTex.dispose();
+        }
+        if (avatar != null) {
+            avatar.dispose();
         }
     }
 }

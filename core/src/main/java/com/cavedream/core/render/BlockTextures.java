@@ -481,76 +481,68 @@ public final class BlockTextures implements Disposable {
         return false;
     }
 
-    /** 逐像素判定（坐标系：y 向下，0=头顶；默认面朝右）。 */
+    /** 逐像素判定（坐标系：y 向下，0=头顶；面朝右）。重画为分离肢体：前臂右、后臂左、双腿带中缝、分左/右脚。 */
     private static int dreamerPixel(int x, int y,
                                     int skin, int skinShade, int blush, int hair, int hairHi,
                                     int robe, int robeD, int robeL, int arm,
                                     int pants, int pantsD, int shoe, int eye) {
-        double hdx = x - 9.5, hdy = y - 11;
-        boolean inHead = hdx * hdx + hdy * hdy <= 46.0;
-        // 呆毛：头顶翘起的一小撮，显得更有活力
-        if ((x == 8 || x == 9 || x == 10) && y >= 1 && y <= 3) {
-            return (x == 9 && y <= 2) ? hairHi : hair;
+        double hdx = x - 9.5, hdy = y - 10;
+        boolean inHead = hdx * hdx + hdy * hdy <= 40.0;
+        // 呆毛
+        if ((x == 9 || x == 10) && y >= 1 && y <= 3) {
+            return (x == 10 && y <= 2) ? hairHi : hair;
         }
         if (inHead) {
-            // 刘海盖住额头（年轻不秃），右侧再垂一缕鬄发
-            if (y <= 10.5 || (y <= 13.0 && x <= 6.0) || (x >= 12 && x <= 13 && y <= 10.5)) {
-                return (y >= 6 && y <= 7 && x >= 9 && x <= 13) ? hairHi : hair;
+            if (y <= 9 || (x <= 4 && y <= 15)) {                 // 刘海 + 左侧后发
+                return (y >= 5 && y <= 7 && x >= 8 && x <= 12) ? hairHi : hair;
             }
-            if (y >= 11.5 && y < 13.5 && x >= 11 && x <= 13.5) {
-                return eye;                                   // 偏大的眼显年轻
+            if (x >= 11 && x <= 13 && y >= 11 && y <= 13) {
+                return eye;                                        // 右视大眼
             }
-            if (x >= 15 && x <= 16 && y >= 12 && y <= 13) {
-                return skinShade;
+            if (x >= 14 && x <= 15 && y >= 12 && y <= 13) {
+                return skinShade;                                  // 鼻
             }
-            if (x >= 12.5 && x <= 14 && y >= 14 && y <= 15) {
-                return blush;
+            if (x >= 12 && x <= 14 && y >= 14 && y <= 15) {
+                return blush;                                      // 腮红
             }
             return skin;
         }
-        // 飘逸长发：沿背后（画面左侧）垂下一束，越往下越收
-        if (y >= 12 && y <= 27) {
-            double right = 5.2 - (y - 12) * 0.16;
-            if (x >= 1 && x <= right) {
-                return (x <= 2.5 && y <= 18) ? hairHi : hair;
-            }
+        if (y >= 15 && y <= 17 && x >= 9 && x <= 11) {
+            return skin;                                           // 脖
         }
-        if (y >= 15.5 && y < 17 && x >= 8.5 && x <= 11.5) {
-            return skin;
-        }
-        if (y >= 17 && y < 28) {
-            int x0 = y < 19 ? 7 : y < 24 ? 6 : 5;
-            int x1 = y < 19 ? 12 : y < 24 ? 13 : 14;
+        if (y >= 17 && y < 28) {                                   // 躯干（袍）
+            int x0 = y < 20 ? 6 : 5;
+            int x1 = y < 20 ? 14 : 15;
             if (x >= x0 && x <= x1) {
-                if (y >= 17 && y < 18.4 && x >= 8 && x <= 12) {
+                if (y < 18) {
                     return robeL;
                 }
-                if (y >= 26.6) {
+                if (y >= 26) {
                     return robeD;
                 }
-                return x < 8.5 ? robeD : robe;
+                return x < 10 ? robeD : robe;
             }
         }
-        if (x >= 12 && x <= 14.5 && y >= 19 && y < 25) {
-            return arm;
+        if (x >= 1 && x <= 4 && y >= 18 && y < 28) {
+            return arm;                                             // 后臂（整条 R_ARM，含手）
         }
-        if (Math.pow(x - 13.5, 2) + Math.pow(y - 25.6, 2) <= 3.2) {
-            return arm;                                    // 手归袖色→上肢（便于大分区快填）
+        if (x >= 16 && x <= 19 && y >= 18 && y < 28) {
+            return arm;                                             // 前臂（整条 R_ARM，含手）
         }
-        if (y >= 28 && y < 38.5) {
-            if (x >= 8.5 && x <= 12) {
+        if (y >= 28 && y < 39) {                                   // 双腿（中缝 x10）
+            if (x >= 11 && x <= 15) {
                 return pants;
             }
-            if (x >= 5 && x <= 8) {
+            if (x >= 5 && x <= 9) {
                 return pantsD;
             }
         }
-        if (y >= 38.5 && y < 41) {
-            if (x >= 8.5 && x <= 14.5) {
+        if (y >= 39 && y < 42) {                                   // 双脚（朝右前脚较长）
+            if (x >= 11 && x <= 16) {
                 return shoe;
             }
-            if (x >= 4 && x <= 8) {
-                return robeD;
+            if (x >= 4 && x <= 9) {
+                return shoe;
             }
         }
         return 0;
