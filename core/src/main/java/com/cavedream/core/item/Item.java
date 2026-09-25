@@ -94,4 +94,23 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
     public static Item ofBlock(BlockType b) {
         return BY_ID.get((int) b.id());   // 强转 int：避免 short 装箱与 Integer 键不等
     }
+
+    /** 熔炼映射：矿石（方块 id 13~16）→ 对应金属锭；非可熔返回 null（只有这四种矿石能进熔炉）。 */
+    public static Item smeltResult(Item ore) {
+        if (ore == null) {
+            return null;
+        }
+        switch (ore.id()) {
+            case 13: return IRON_INGOT;        // 铁矿
+            case 14: return GOLD_INGOT;        // 金矿
+            case 15: return PLATINUM_INGOT;    // 白金矿
+            case 16: return SAINT_INGOT;       // 圣矿
+            default: return null;
+        }
+    }
+
+    /** 是否可熔炼（即可放入熔炉输入格）。 */
+    public static boolean smeltable(Item it) {
+        return smeltResult(it) != null;
+    }
 }

@@ -27,6 +27,8 @@ public final class BlockTextures implements Disposable {
     public static final int BLOB_W = 8, BLOB_H = 8;
     public static final int PICKAXE = 16;
     public static final int COIN_SIZE = 16;
+    /** 整体树贴图（透明底，供世界内按 3×H 矩形纵向拉伸）。 */
+    public static final int TREE_TEX_W = 48, TREE_TEX_H = 240;
 
     /** 导出某材料 64×64 连续 sheet 的 ARGB 像素（不透明）。 */
     public static int[] bakeSheetArgb(BlockType b) {
@@ -54,6 +56,7 @@ public final class BlockTextures implements Disposable {
     private Texture blobWhite;
     private Texture pickaxe;
     private Texture coin;
+    private Texture tree;
 
     public BlockTextures() {
         for (BlockType b : BlockType.values()) {
@@ -98,6 +101,10 @@ public final class BlockTextures implements Disposable {
         coin = new Texture(cn);
         coin.setFilter(TextureFilter.Nearest, TextureFilter.Nearest);
         cn.dispose();
+        Pixmap tr = argbPixmap(paintTreeArgb(), TREE_TEX_W, TREE_TEX_H);   // 透明底整树
+        tree = new Texture(tr);
+        tree.setFilter(TextureFilter.Linear, TextureFilter.Linear);        // 纵向拉伸→线性更平滑
+        tr.dispose();
     }
 
     private static Texture linear(Pixmap pm) {
@@ -252,6 +259,11 @@ public final class BlockTextures implements Disposable {
         return coin;
     }
 
+    /** 整体树贴图（透明底）；TREE_TEX_W×TREE_TEX_H，世界内按树矩形拉伸。 */
+    public Texture tree() {
+        return tree;
+    }
+
     @Override
     public void dispose() {
         for (Texture t : sheets) {
@@ -267,6 +279,7 @@ public final class BlockTextures implements Disposable {
         blobWhite.dispose();
         pickaxe.dispose();
         coin.dispose();
+        tree.dispose();
     }
 
     /* ---------------- 连续噪声贴图（可平铺 64×64） ---------------- */
@@ -383,16 +396,14 @@ public final class BlockTextures implements Disposable {
     private static int[] paintLipArgb() {
         int[] a = new int[LIP_W * LIP_H];
         for (int x = 0; x < 16; x++) {
-            int h = 4 + (int) Math.round(2.2 * Math.sin(x * 0.55 + 1.2));   // 起伏草沿
+            int h = 5 + (int) Math.round(1.4 * Math.sin(x * 0.9 + 1.2));   // 轻微起伏的草沿
             for (int y = 0; y < h; y++) {
-                int c = y == 0 ? shade(0x67B34A, 1.12)                        // 顶亮边
-                        : y >= h - 2 ? shade(0x4C8A3E, 0.72)                  // 根须渐暗
-                        : shade(0x57A044, 0.95 + 0.1 * Math.sin(x * 1.7));
+                int c = y == 0 ? shade(0x6FBF52, 1.10)                       // 顶亮边
+                        : y >= h - 2 ? shade(0x4C8A3E, 0.78)                 // 根须渐暗入土
+                        : shade(0x57A044, 0.95 + 0.08 * Math.sin(x * 1.9));
                 a[y * LIP_W + x] = 0xFF000000 | (c & 0xFFFFFF);
             }
-            // 1px 描边勾在草沿头顶
-            int ey = Math.max(0, (int) Math.round(2.2 * Math.sin(x * 0.55 + 1.2)) - 1);
-            a[ey * LIP_W + x] = 0xFF000000 | (shade(0x2F5A28, 1.0) & 0xFFFFFF);
+            // 不再画 wavy 深色弧形描边（旧弧线逐格重复→连成眼镜状）；顶行亮绿已自成一刃轮廓。
         }
         return a;
     }
@@ -617,6 +628,49 @@ public final class BlockTextures implements Disposable {
     }
 
     /* ---------------- 工具 ---------------- */
+
+    /** 整体树 ARGB（48×240，透明底）：中心树干 + 底部张开贴地根 + 顶部蓬松树冠（多圆叠加）。 */
+    private static int[] paintTreeArgb() {
+        final int W = TREE_TEX_W, H = TREE_TEX_H;
+        final int cx = W / 2;
+        final int trunkTopY = (int) (H * 0.40);
+        final int[] greens = {0x2F6B2A, 0x3E7A2E, 0x4C8A3E, 0x5FA24A};
+        final double cy = H * 0.22;
+        final double[] bx = {-14, 14, 0, -20, 20, -6, 6, 0};   // 树冠各团圆（相对中心）
+        final double[] by = {8, 8, -14, 20, 20, 22, 22, 0};
+        final double[] br = {20, 20, 20, 15, 15, 16, 16, 26};
+        int[] a = new int[W * H];
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                int argb = 0;
+                // 树干 + 贴地根（底部数行向外张开）
+                if (y >= trunkTopY) {
+                    int fromBottom = H - 1 - y;
+                    double hw = 2.6;
+                    if (fromBottom < 16) {
+                        hw += (16 - fromBottom) * 0.42;
+                    }
+                    double dx = Math.abs(x - cx);
+                    if (dx <= hw) {
+                        int wood = dx > hw - 1.1 ? 0x4A2E18 : 0x6E4A28;   // 边缘描深
+                        argb = 0xFF000000 | (wood & 0xFFFFFF);
+                    }
+                }
+                // 树冠（覆盖树干顶→叶在前）
+                double shade01 = 0.72 + 0.28 * (y / (double) H);           // 靠下略暗
+                for (int k = 0; k < bx.length; k++) {
+                    double dx = x - (cx + bx[k]), dy = y - (cy + by[k]);
+                    if (dx * dx + dy * dy < br[k] * br[k]) {
+                        int base = greens[Math.abs(x * 7 + y * 13) % greens.length];
+                        argb = 0xFF000000 | (shade(base, shade01) & 0xFFFFFF);
+                        break;
+                    }
+                }
+                a[y * W + x] = argb;
+            }
+        }
+        return a;
+    }
 
     private static void put(Pixmap pm, int x, int y, int rgb) {
         pm.setColor(((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f, 1f);

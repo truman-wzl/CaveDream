@@ -57,7 +57,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private static final float VIEW_HEIGHT_PX = 720f;
     private static final float DEPTH_PER = 0.0085f;   // 每深一格的暗度增量
     private static final float DEPTH_MAX = 0.46f;     // 深度暗度上限（保留底部可读）
-    private static final float PICKUP_MAGNET_PX = 3.5f * TILE;   // 拾取吸附半径（初始 3.5 格）
+    private static final float PICKUP_MAGNET_PX = 5f * TILE;    // 拾取吸附半径（初始 5 格）
     private static final float MAGNET_SPEED = 260f;             // 吸附飞行速度
 
     /** 拾取动画残影：从掉落点飞向玩家、逐渐缩小淡出。 */
@@ -95,7 +95,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final java.util.Map<Integer, Texture> itemPaintTex = new java.util.HashMap<>();     // 重绘外观的缓存纹理
     private final java.util.HashMap<Integer, Inventory> chests = new java.util.HashMap<>();   // 木箱内容 tileIdx→背包
     private int openChest = -1;                                             // 打开的容器 tileIdx，-1 无
+    private int openFurnace = -1;                                          // 打开的熔炉锚点 tileIdx，-1 无
+    private final java.util.HashMap<Integer, FurnaceData> furnaces = new java.util.HashMap<>();   // 熔炉锚点→料/产物
+    private static final int FURN_SLOTS = 4;                               // 熔炉 4 对“矿→锭”并行槽
     private final java.util.HashMap<Integer, Integer> mountEdits = new java.util.HashMap<>();   // 墙面对象改动 idx→blockId（持久）
+    private final java.util.HashMap<Integer, TreeData> trees = new java.util.HashMap<>();      // 锚点idx→树（渲染/砍伐）
+    private final java.util.HashMap<Integer, GrowState> growing = new java.util.HashMap<>();   // 锚点idx→未长成树生长态
+    private static final float TREE_GROW_SECONDS = 20f;   // 每 +1 格高的间隔（可配）
     private volatile String guideLine = "";                                 // 构梦者台词（大模型生成）
     private float guideEngageT;                                             // 与构梦者相处计时（≥3s 触发闲聊）
     private volatile boolean chatterLoading;                                // 闲聊生成中（避免并发）
@@ -104,6 +110,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private TextureRegion blobRegion;
     private TextureRegion pickaxeRegion;
     private TextureRegion coinRegion;
+    private TextureRegion treeRegion;
     private BlockType holdBlock = BlockType.DIRT;
     private final Vector3 mouseWorld = new Vector3();
     private final float[] dust = new float[90 * 3];   // x, y, 相位
@@ -211,6 +218,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         buildDreamer();
         pickaxeRegion = new TextureRegion(textures.pickaxe());
         coinRegion = new TextureRegion(textures.coin());
+        treeRegion = new TextureRegion(textures.tree());
         int[] gs = VillageBuilder.build(world, spawnTileX, spawnTileY, seed);   // 出生点旁建村庄，得向导落点
         guide.place(gs[0] * (float) TILE, gs[1] * (float) TILE);
         guide.setHome(gs[0] * (float) TILE, TILE * 3f);   // 以落点为中心、左右各 3 格自由走动
@@ -226,6 +234,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         lightEngine.recomputeRegion(world, spawnTileX, spawnTileY, LIGHT_RADIUS);   // 初始局部光照（围绕出生点）
         lastLCx = spawnTileX;
         lastLCy = spawnTileY;
+        rebuildTreeRegistry();   // 扫描世界登记已有树（世界树 + 玩家树）
     }
 
     @Override
@@ -263,7 +272,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     @Override
     public void render(float delta) {
         if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)
-                && !showInv && !shopOpen && !codexMenuOpen && openChest < 0) {
+                && !showInv && !shopOpen && !codexMenuOpen && openChest < 0 && openFurnace < 0) {
             paused = !paused;   // 无面板时才用 ESC 弹暂停菜单（面板开着时 ESC 由面板自己处理）
         }
         frameDelta = delta;
@@ -307,6 +316,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             updateServants(delta);
             updateGuide();
             updateGuideNpc(delta);
+            updateTrees(delta);
             if (slashT > 0f) {
                 slashT -= delta;
             }
@@ -335,6 +345,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         drawVisibleTiles();
+        drawTrees();
         drawMiningProgress();
         drawLighting();
         drawMobs();
@@ -356,6 +367,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawShop();
         drawCodexMenu();
         drawChest();
+        drawFurnace();
         drawToast();
         drawGuideBubble();
     }
@@ -571,7 +583,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                     craftScroll = 0;
                 }
                 wheelAccum = 0f;
-            } else if (showInv || shopOpen || codexMenuOpen || openChest >= 0) {
+            } else if (showInv || shopOpen || codexMenuOpen || openChest >= 0 || openFurnace >= 0) {
                 wheelAccum = 0f;   // 任何面板开着：滚轮不切快捷栏
             } else {
                 while (wheelAccum >= 1f) {
@@ -622,6 +634,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             miningNow = false;
             digProgress = 0f;
             handleChestClick();
+            return;
+        }
+        if (openFurnace >= 0) {              // 熔炉开启：只处理存料/取锭/熔炼
+            miningNow = false;
+            digProgress = 0f;
+            handleFurnaceClick();
             return;
         }
         if (downed) {                          // 濒死：不可挖掘/攻击/放置（仅可移动，移速已降）
@@ -685,6 +703,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         if (leftHeld && tile != null && heldTool != null) {
             BlockType b = world.blockAt(tile[0], tile[1]);
             float need = heldTool.digSeconds(b);
+            if (b.isTree() && !isTreeChopCell(tile[0], tile[1])) {
+                need = -1f;   // 树仅底部中间格可砍（镐也砍不动，见 Tool 门控）
+            }
             if (need >= 0f) {
                 if (tile[0] != digX || tile[1] != digY) {
                     digX = tile[0];
@@ -694,7 +715,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 digProgress += frameDelta / Math.max(0.03f, need);
                 mining = true;
                 if (digProgress >= 1f) {
-                    if (world.mountAt(tile[0], tile[1]) != BlockType.AIR) {
+                    if (b.isTree()) {
+                        chopTree(tile[0], tile[1]);   // 整棵消散→掉木材
+                    } else if (world.mountAt(tile[0], tile[1]) != BlockType.AIR) {
                         popMount(tile[0], tile[1]);   // 先摘墙面对象，不伤墙
                     } else {
                         breakBlock(tile[0], tile[1], b);   // 多格家具整体破坏、掉 1
@@ -715,6 +738,14 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         miningNow = mining;
 
+        // 右键熔炉→打开熔铸界面（自带存储+加工：上排放矿石、自动熔为下排金属锭）
+        if (Gdx.input.isButtonJustPressed(Input.Buttons.RIGHT) && tile != null
+                && world.blockAt(tile[0], tile[1]).isSmelter()) {
+            int[] a = anchorOf(tile[0], tile[1], BlockType.FURNACE);
+            openFurnace = a[1] * world.getWidth() + a[0];
+            smeltTick(furnaceAt(openFurnace));
+            return;
+        }
         // 右键存储摆件→打开存取（多格箱→锁到锚点格）
         if (Gdx.input.isButtonJustPressed(Input.Buttons.RIGHT) && tile != null
                 && world.blockAt(tile[0], tile[1]).storageCapacity() > 0) {
@@ -731,7 +762,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         // 右键：放置方块（支持多格家具）/ 交互
         if (Gdx.input.isButtonJustPressed(Input.Buttons.RIGHT) && tile != null
                 && held != null && held.placeable()) {
-            if (!tryMount(tile[0], tile[1], held.block())) {
+            if (held.block().isTree()) {
+                plantTree(tile[0], tile[1]);   // 树苗→占 3×起始高、随后逐格长高
+            } else if (!tryMount(tile[0], tile[1], held.block())) {
                 placeBlock(tile[0], tile[1], held.block());
             }
         }
@@ -1072,7 +1105,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private java.util.List<Item> paintableItems() {
         java.util.List<Item> list = new java.util.ArrayList<>();
         for (BlockType b : BlockType.values()) {
-            if (b != BlockType.AIR && b != BlockType.FOG && b != BlockType.WATER) {
+            if (b != BlockType.AIR && b != BlockType.FOG && b != BlockType.WATER && b != BlockType.TREE) {
                 list.add(Item.ofBlock(b));
             }
         }
@@ -1350,7 +1383,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         for (int dx = 0; dx < fw; dx++) {
             for (int dy = 0; dy < fh; dy++) {
                 int x = ax + dx, y = ay + dy;
-                if (!world.inBounds(x, y) || world.blockAt(x, y) != BlockType.AIR || player.overlapsTile(x, y)) {
+                BlockType cur = world.blockAt(x, y);
+                boolean free = cur == BlockType.AIR || cur.backgroundWall();   // 背景木墙属背景层→家具可占用其前景（替换该格墙）
+                if (!world.inBounds(x, y) || !free || player.overlapsTile(x, y)) {
                     return;   // 放不下
                 }
             }
@@ -1437,7 +1472,420 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
         }
         spawnDrop(x, y, Item.ofBlock(b));
+        if (b.isSmelter()) {                       // 熔炉被拆→掉出内部矿石/金属锭
+            int anchor = a[1] * w + a[0];
+            FurnaceData f = furnaces.remove(anchor);
+            if (f != null) {
+                for (int i = 0; i < FURN_SLOTS; i++) {
+                    if (f.inId[i] >= 0 && f.inN[i] > 0) {
+                        spawnDropN(x, y, Item.byId(f.inId[i]), f.inN[i]);
+                    }
+                    if (f.outId[i] >= 0 && f.outN[i] > 0) {
+                        spawnDropN(x, y, Item.byId(f.outId[i]), f.outN[i]);
+                    }
+                }
+            }
+            if (openFurnace == anchor) {
+                openFurnace = -1;
+            }
+        }
         lightDirty = true;
+    }
+
+    /* ---------------- 树对象：种植 / 生长 / 砍伐 / 渲染 ---------------- */
+
+    /** 树底部中间格（贴地、两侧为根）= 唯一可砍点。 */
+    private boolean isTreeChopCell(int x, int y) {
+        return world.blockAt(x, y) == BlockType.TREE
+                && world.blockAt(x, y - 1) != BlockType.TREE
+                && world.blockAt(x - 1, y) == BlockType.TREE
+                && world.blockAt(x + 1, y) == BlockType.TREE;
+    }
+
+    /** (ax, y) 这一行三列是否都是树（ax 为底行最左列）。 */
+    private boolean rowAllTree(int ax, int y) {
+        for (int c = 0; c < BlockType.TREE_W; c++) {
+            if (world.blockAt(ax + c, y) != BlockType.TREE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 扫描世界重建树表（读档/新档后调用；每棵按“底行最左格”识别一次）。 */
+    private void rebuildTreeRegistry() {
+        trees.clear();
+        int W = world.getWidth(), H = world.getHeight();
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                if (world.blockAt(x, y) != BlockType.TREE) {
+                    continue;
+                }
+                if (world.blockAt(x, y - 1) == BlockType.TREE || world.blockAt(x - 1, y) == BlockType.TREE) {
+                    continue;   // 非“底行最左”→跳过
+                }
+                int h = 0;
+                while (rowAllTree(x, y + h)) {
+                    h++;
+                }
+                if (h > 0) {
+                    trees.put(y * W + x, new TreeData(x, y, h));
+                }
+            }
+        }
+        growing.keySet().retainAll(trees.keySet());   // 锚点已消失（被砍）→清生长态
+    }
+
+    /** 以 (cx,cy) 为树干底部中央种一棵树苗（起始高 TREE_START_H，随机目标高，随后逐格长高）。 */
+    private void plantTree(int cx, int cy) {
+        int ax = cx - 1, ay = cy;
+        int h0 = BlockType.TREE_START_H;
+        for (int c = 0; c < BlockType.TREE_W; c++) {
+            if (!world.blockAt(ax + c, ay - 1).solid()) {
+                return;   // 底行下方须是实心地面
+            }
+        }
+        for (int dy = 0; dy < h0; dy++) {
+            for (int c = 0; c < BlockType.TREE_W; c++) {
+                int x = ax + c, y = ay + dy;
+                if (!world.inBounds(x, y) || world.blockAt(x, y) != BlockType.AIR || player.overlapsTile(x, y)) {
+                    return;   // 空间不足/压玩家→不放
+                }
+            }
+        }
+        for (int dy = 0; dy < h0; dy++) {
+            for (int c = 0; c < BlockType.TREE_W; c++) {
+                setTileEdit(ax + c, ay + dy, BlockType.TREE);
+            }
+        }
+        int anchor = ay * world.getWidth() + ax;
+        trees.put(anchor, new TreeData(ax, ay, h0));
+        int targetH = BlockType.TREE_MIN_H
+                + (int) (Math.random() * (BlockType.TREE_MAX_H - BlockType.TREE_MIN_H + 1));
+        growing.put(anchor, new GrowState(0f, targetH));
+        inventory.takeSelectedOne();
+        toast = "种下一棵树苗（会慢慢长高）";
+        toastT = 1.6f;
+    }
+
+    /** 每帧推进未长成树：到点则向上长 1 格（顶行需全 AIR），达目标高转成熟。 */
+    private void updateTrees(float dt) {
+        if (growing.isEmpty()) {
+            return;
+        }
+        java.util.Iterator<java.util.Map.Entry<Integer, GrowState>> it = growing.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<Integer, GrowState> en = it.next();
+            TreeData td = trees.get(en.getKey());
+            if (td == null) {
+                it.remove();
+                continue;
+            }
+            GrowState g = en.getValue();
+            g.age += dt;
+            while (g.age >= TREE_GROW_SECONDS && td.h < g.targetH) {
+                g.age -= TREE_GROW_SECONDS;
+                int topY = td.ay + td.h;
+                boolean space = true;
+                for (int c = 0; c < BlockType.TREE_W; c++) {
+                    if (world.blockAt(td.ax + c, topY) != BlockType.AIR) {
+                        space = false;
+                    }
+                }
+                if (!space) {
+                    g.age = TREE_GROW_SECONDS;   // 顶被堵→等待空间腾出
+                    break;
+                }
+                for (int c = 0; c < BlockType.TREE_W; c++) {
+                    setTileEdit(td.ax + c, topY, BlockType.TREE);
+                }
+                td.h++;
+            }
+            if (td.h >= g.targetH) {
+                it.remove();   // 成熟
+            }
+        }
+    }
+
+    /** 砍倒整棵：从底部中央格量出矩形、整体清除、按高度掉木材 + 树苗（可再生）。 */
+    private void chopTree(int cx, int by) {
+        int ax = cx - 1;
+        int h = 0;
+        while (rowAllTree(ax, by + h)) {
+            h++;
+        }
+        if (h <= 0) {
+            return;
+        }
+        for (int dy = 0; dy < h; dy++) {
+            for (int c = 0; c < BlockType.TREE_W; c++) {
+                setTileEdit(ax + c, by + dy, BlockType.AIR);
+            }
+        }
+        int anchor = by * world.getWidth() + ax;
+        trees.remove(anchor);
+        growing.remove(anchor);
+        int wood = woodByHeight(h);
+        spawnDropN(cx, by, Item.ofBlock(BlockType.WOOD), wood);
+        spawnDropN(cx, by, Item.ofBlock(BlockType.TREE), 1 + (int) (Math.random() * 2));
+        toast = "砍倒一棵树：木材 +" + wood;
+        toastT = 1.6f;
+    }
+
+    /** 木材数∝树高（6~16 高 → 约 6~16 木材 + 少量随机）。 */
+    private int woodByHeight(int h) {
+        int w = (int) Math.round(h * 0.9) + (int) (Math.random() * 3);
+        if (w < 6) {
+            w = 6;
+        }
+        if (w > 16) {
+            w = 16;
+        }
+        return w;
+    }
+
+    /** 改方块并记入 diff（树占用/生长/砍伐统一走这里）。 */
+    private void setTileEdit(int x, int y, BlockType b) {
+        if (!world.inBounds(x, y)) {
+            return;
+        }
+        world.setBlock(x, y, b);
+        edits.put(y * world.getWidth() + x, (int) b.id());
+    }
+
+    /** 掉落指定数量的物品（默认 spawnDrop 只掉 1）。 */
+    private void spawnDropN(int tileX, int tileY, Item it, int count) {
+        if (it == null || count <= 0) {
+            return;
+        }
+        drops.add(new ItemDrop(tileX * (float) TILE + (TILE - ItemDrop.SIZE) / 2f,
+                tileY * (float) TILE + 2f, it, count));
+    }
+
+    /** 视口内逐棵画整树贴图（按 3×h 矩形纵向拉伸）。 */
+    private void drawTrees() {
+        float halfW = camera.viewportWidth / 2, halfH = camera.viewportHeight / 2;
+        float vx0 = camera.position.x - halfW, vx1 = camera.position.x + halfW;
+        float vy0 = camera.position.y - halfH, vy1 = camera.position.y + halfH;
+        batch.setColor(1, 1, 1, 1);
+        for (TreeData t : trees.values()) {
+            float px = t.ax * (float) TILE, py = t.ay * (float) TILE;
+            float pw = BlockType.TREE_W * (float) TILE, ph = t.h * (float) TILE;
+            if (px > vx1 || px + pw < vx0 || py > vy1 || py + ph < vy0) {
+                continue;
+            }
+            batch.draw(treeRegion, px, py, pw, ph);
+        }
+    }
+
+    /** 树数据（锚点=底行最左格 + 当前高）。 */
+    private static final class TreeData {
+        int ax;
+        int ay;
+        int h;
+        TreeData(int ax, int ay, int h) {
+            this.ax = ax;
+            this.ay = ay;
+            this.h = h;
+        }
+    }
+
+    /** 生长态（仅未长成的玩家树）。 */
+    private static final class GrowState {
+        float age;
+        int targetH;
+        GrowState(float age, int targetH) {
+            this.age = age;
+            this.targetH = targetH;
+        }
+    }
+
+    /* ---------------- 熔炉：熔铸界面 + 存取 + 即时熔炼 ---------------- */
+
+    /** 取/建某锚点的熔炉数据（4 输入 + 4 输出）。 */
+    private FurnaceData furnaceAt(int anchor) {
+        return furnaces.computeIfAbsent(anchor, k -> new FurnaceData());
+    }
+
+    /** 即时熔炼：每列输入格够 3 个同类矿石→扣 3 产 1 对应锭进下方格（产物满/异种则停）。 */
+    private void smeltTick(FurnaceData f) {
+        for (int i = 0; i < FURN_SLOTS; i++) {
+            if (f.inId[i] < 0 || f.inN[i] < 3) {
+                continue;
+            }
+            Item res = Item.smeltResult(Item.byId(f.inId[i]));
+            if (res == null) {
+                continue;
+            }
+            if (f.outId[i] < 0) {
+                f.outId[i] = res.id();
+            } else if (f.outId[i] != res.id()) {
+                continue;   // 产物格是别的锭→先不熔
+            }
+            int make = Math.min(f.inN[i] / 3, 999 - f.outN[i]);
+            if (make > 0) {
+                f.outN[i] += make;
+                f.inN[i] -= make * 3;
+            }
+            if (f.inN[i] <= 0) {
+                f.inId[i] = -1;
+                f.inN[i] = 0;
+            }
+        }
+    }
+
+    private float[] furnaceLayout() {
+        float slot = uiCam.viewportHeight * 0.052f, gap = slot * 0.18f, pad = slot * 0.7f;
+        float titleH = slot * 1.2f, arrowH = slot * 0.9f, hintH = slot * 0.9f;
+        float gridW = FURN_SLOTS * slot + (FURN_SLOTS - 1) * gap;
+        float w = gridW + 2 * pad;
+        float h = pad + titleH + slot + arrowH + slot + hintH + pad;
+        float x = uiCam.viewportWidth / 2f - w / 2f, y = uiCam.viewportHeight / 2f - h / 2f;
+        return new float[]{x, y, w, h, slot, gap, pad, titleH, arrowH, hintH};
+    }
+
+    /** col=列(0..3)，row=0 上排输入 / 1 下排输出。返回 {x,y,size}。 */
+    private float[] furnaceSlotRect(int col, int row, float[] P) {
+        float y0 = P[1], h = P[3], slot = P[4], gap = P[5], pad = P[6], titleH = P[7], arrowH = P[8];
+        float left = P[0] + pad;
+        float inputY = y0 + h - pad - titleH - slot;         // 上排输入
+        float outY = inputY - arrowH - slot;                 // 下排输出
+        float x = left + col * (slot + gap);
+        return new float[]{x, row == 0 ? inputY : outY, slot};
+    }
+
+    private void drawFurnace() {
+        if (openFurnace < 0) {
+            return;
+        }
+        FurnaceData f = furnaceAt(openFurnace);
+        float[] P = furnaceLayout();
+        batch.setProjectionMatrix(uiCam.combined);
+        batch.begin();
+        WoodUi.panel(batch, pixel, P[0], P[1], P[2], P[3]);
+        font.setColor(0.95f, 0.9f, 0.7f, 1f);
+        font.draw(batch, "熔炉 · 熔铸", P[0] + P[6], P[1] + P[3] - P[6] - P[7] * 0.5f);
+        font.setColor(1, 1, 1, 1);
+        float mx = uiMouseX(), my = uiMouseY();
+        for (int col = 0; col < FURN_SLOTS; col++) {
+            float[] ri = furnaceSlotRect(col, 0, P);
+            float[] ro = furnaceSlotRect(col, 1, P);
+            boolean hovI = mx >= ri[0] && mx <= ri[0] + ri[2] && my >= ri[1] && my <= ri[1] + ri[2];
+            boolean hovO = mx >= ro[0] && mx <= ro[0] + ro[2] && my >= ro[1] && my <= ro[1] + ro[2];
+            drawSlot(ri[0], ri[1], ri[2], f.inId[col] < 0 ? null : Item.byId(f.inId[col]), f.inN[col], hovI);
+            drawSlot(ro[0], ro[1], ro[2], f.outId[col] < 0 ? null : Item.byId(f.outId[col]), f.outN[col], hovO);
+            float cx = ri[0] + ri[2] / 2f;                 // 向下箭头（输入→产物）
+            float midY = (ri[1] + (ro[1] + ro[2])) / 2f;
+            batch.setColor(1f, 0.85f, 0.3f, 0.95f);
+            batch.draw(pixel, cx - 1.5f, midY - 8f, 3f, 16f);
+            batch.draw(pixel, cx - 6f, midY - 10f, 12f, 3f);
+            batch.setColor(1, 1, 1, 1);
+        }
+        font.setColor(0.7f, 0.72f, 0.85f, 1f);
+        font.draw(batch, "上排放矿石（每 3 个熔成 1 锭）· 点下排取金属锭 · 右键/Esc 关闭",
+                P[0] + P[6], P[1] + P[6] + P[9] * 0.4f);
+        font.setColor(1, 1, 1, 1);
+        batch.end();
+    }
+
+    private void handleFurnaceClick() {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE) || Gdx.input.isButtonJustPressed(Input.Buttons.RIGHT)) {
+            openFurnace = -1;
+            return;
+        }
+        if (!Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
+            return;
+        }
+        FurnaceData f = furnaceAt(openFurnace);
+        float[] P = furnaceLayout();
+        float mx = uiMouseX(), my = uiMouseY();
+        Item held = inventory.selectedItem();
+        for (int col = 0; col < FURN_SLOTS; col++) {
+            float[] ri = furnaceSlotRect(col, 0, P);
+            if (mx >= ri[0] && mx <= ri[0] + ri[2] && my >= ri[1] && my <= ri[1] + ri[2]) {
+                depositOre(f, col, held);
+                smeltTick(f);
+                return;
+            }
+            float[] ro = furnaceSlotRect(col, 1, P);
+            if (mx >= ro[0] && mx <= ro[0] + ro[2] && my >= ro[1] && my <= ro[1] + ro[2]) {
+                takeIngot(f, col);
+                return;
+            }
+        }
+    }
+
+    /** 上排：手持矿石存入该列输入格（同类可叠、上限 999）；无可熔手持→取回矿石。 */
+    private void depositOre(FurnaceData f, int col, Item held) {
+        if (held != null && Item.smeltable(held)) {
+            if (f.inId[col] < 0) {
+                int move = Math.min(inventory.countAt(inventory.selected()), 999);
+                f.inId[col] = held.id();
+                f.inN[col] = move;
+                inventory.remove(held, move);
+            } else if (f.inId[col] == held.id()) {
+                int move = Math.min(inventory.countAt(inventory.selected()), Math.max(0, 999 - f.inN[col]));
+                if (move > 0) {
+                    f.inN[col] += move;
+                    inventory.remove(held, move);
+                }
+            } else {
+                toast = "该格已是别的矿石";
+                toastT = 1.4f;
+            }
+            return;
+        }
+        if (f.inId[col] >= 0 && f.inN[col] > 0) {   // 无可熔手持→取回输入矿石
+            Item it = Item.byId(f.inId[col]);
+            int c = f.inN[col];
+            if (inventory.add(it, c)) {
+                f.inId[col] = -1;
+                f.inN[col] = 0;
+            } else {
+                toast = "背包已满";
+                toastT = 1.4f;
+            }
+        }
+    }
+
+    /** 下排：取回该列熔好的金属锭。 */
+    private void takeIngot(FurnaceData f, int col) {
+        if (f.outId[col] >= 0 && f.outN[col] > 0) {
+            Item it = Item.byId(f.outId[col]);
+            int c = f.outN[col];
+            if (inventory.add(it, c)) {
+                f.outId[col] = -1;
+                f.outN[col] = 0;
+            } else {
+                toast = "背包已满";
+                toastT = 1.4f;
+            }
+        }
+    }
+
+    /** 熔炉一格数据：4 输入（矿石）+ 4 输出（金属锭），按列配对。 */
+    private static final class FurnaceData {
+        final int[] inId;
+        final int[] inN;
+        final int[] outId;
+        final int[] outN;
+        FurnaceData() {
+            inId = new int[FURN_SLOTS];
+            java.util.Arrays.fill(inId, -1);
+            inN = new int[FURN_SLOTS];
+            outId = new int[FURN_SLOTS];
+            java.util.Arrays.fill(outId, -1);
+            outN = new int[FURN_SLOTS];
+        }
+
+        boolean hasContent() {
+            for (int i = 0; i < FURN_SLOTS; i++) {
+                if (inN[i] > 0 || outN[i] > 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     /* ---------------- 渲染 ---------------- */
@@ -1468,8 +1916,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         for (int x = x0; x <= x1; x++) {
             for (int y = y0; y <= y1; y++) {
                 BlockType b = world.blockAt(x, y);
-                if (b == BlockType.AIR) {
-                    continue;
+                if (b == BlockType.AIR || b.isTree()) {
+                    continue;   // 树整体由 drawTrees 单独绘制
                 }
                 float px = x * (float) TILE, py = y * (float) TILE;
                 batch.setColor(1, 1, 1, 1);
@@ -1929,11 +2377,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return true;
     }
 
-    /** 仆从推进（跟随/索敌/攻击，到期或死亡移除）。 */
+    /** 仆从推进（跟随/索敌/攻击，到期或死亡移除）；索敌范围=当前视框内所有怪。 */
     private void updateServants(float dt) {
         float pcx = player.centerX(), pcy = player.centerY();
+        float halfW = camera.viewportWidth / 2f, halfH = camera.viewportHeight / 2f;
+        float vcx = camera.position.x, vcy = camera.position.y;
         for (java.util.Iterator<Servant> it = servants.iterator(); it.hasNext(); ) {
-            if (!it.next().update(pcx, pcy, spawner.mobs(), dt)) {
+            if (!it.next().update(pcx, pcy, spawner.mobs(), dt, vcx, vcy, halfW, halfH)) {
                 it.remove();
             }
         }
@@ -2156,6 +2606,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             return coinRegion;
         }
         if (it.placeable()) {
+            if (it.block().isTree()) {
+                return treeRegion;   // 树物品用整树剪影作图标
+            }
             return tileRegion(it.block(), 0, 0);
         }
         Texture t = uiIcons.iconFor(it);
@@ -2639,11 +3092,44 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
 
     private void drawCursor() {
         int[] tile = mouseTile();
-        if (tile != null) {
-            batch.setColor(1f, 1f, 0.4f, 0.35f);
+        if (tile == null) {
+            return;
+        }
+        BlockType b = world.blockAt(tile[0], tile[1]);
+        if (b.storageCapacity() > 0 || b.isSmelter() || b == BlockType.WORKBENCH || b == BlockType.DOOR) {
+            int[] a = anchorOf(tile[0], tile[1], b);   // 可交互方块→整片 footprint 金描边
+            goldOutline(a[0], a[1], b.footprintW(), b.footprintH());
+        } else if (guide.present() && pointerOverGuide()) {
+            goldOutlinePx(guide.x(), guide.y(), TILE * 1.3f, TILE * 2.6f);   // 可对话 NPC→金描边
+        } else {
+            batch.setColor(1f, 1f, 0.4f, 0.22f);
             batch.draw(pixel, tile[0] * (float) TILE, tile[1] * (float) TILE, TILE, TILE);
             batch.setColor(1, 1, 1, 1);
         }
+    }
+
+    /** 世界格坐标系的金色描边（footprint 大小）：标记可交互内容被悬停。 */
+    private void goldOutline(int ax, int ay, int fw, int fh) {
+        goldOutlinePx(ax * (float) TILE, ay * (float) TILE, fw * (float) TILE, fh * (float) TILE);
+    }
+
+    private void goldOutlinePx(float x, float y, float w, float h) {
+        float t = 2f;
+        batch.setColor(1f, 0.85f, 0.3f, 0.95f);
+        batch.draw(pixel, x, y + h - t, w, t);
+        batch.draw(pixel, x, y, w, t);
+        batch.draw(pixel, x, y, t, h);
+        batch.draw(pixel, x + w - t, y, t, h);
+        batch.setColor(1, 1, 1, 1);
+    }
+
+    /** 鼠标世界坐标是否落在构梦者贴图矩形内。 */
+    private boolean pointerOverGuide() {
+        mouseWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0);
+        camera.unproject(mouseWorld);
+        float gx = guide.x(), gy = guide.y();
+        return mouseWorld.x >= gx && mouseWorld.x <= gx + TILE * 1.3f
+                && mouseWorld.y >= gy && mouseWorld.y <= gy + TILE * 2.6f;
     }
 
     private void drawHud() {
@@ -2775,6 +3261,59 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         s.mountIdx = mIdx;
         s.mountBlock = mBlk;
+        int gn = growing.size();
+        int[] gAnchor = new int[gn];
+        int[] gTarget = new int[gn];
+        float[] gAge = new float[gn];
+        int gi = 0;
+        for (java.util.Map.Entry<Integer, GrowState> e : growing.entrySet()) {
+            if (!trees.containsKey(e.getKey())) {
+                continue;   // 双保险：只存仍在场的树
+            }
+            gAnchor[gi] = e.getKey();
+            gTarget[gi] = e.getValue().targetH;
+            gAge[gi] = e.getValue().age;
+            gi++;
+        }
+        if (gi < gn) {
+            gAnchor = java.util.Arrays.copyOf(gAnchor, gi);
+            gTarget = java.util.Arrays.copyOf(gTarget, gi);
+            gAge = java.util.Arrays.copyOf(gAge, gi);
+        }
+        s.growAnchor = gAnchor;
+        s.growTargetH = gTarget;
+        s.growAge = gAge;
+        int fn = 0;
+        for (FurnaceData f : furnaces.values()) {
+            if (f.hasContent()) {
+                fn++;
+            }
+        }
+        int[] fAnc = new int[fn];
+        int[] fiI = new int[fn * FURN_SLOTS];
+        int[] fiN = new int[fn * FURN_SLOTS];
+        int[] foI = new int[fn * FURN_SLOTS];
+        int[] foN = new int[fn * FURN_SLOTS];
+        int fk = 0;
+        for (java.util.Map.Entry<Integer, FurnaceData> e : furnaces.entrySet()) {
+            FurnaceData f = e.getValue();
+            if (!f.hasContent()) {
+                continue;
+            }
+            fAnc[fk] = e.getKey();
+            for (int c = 0; c < FURN_SLOTS; c++) {
+                fiI[fk * FURN_SLOTS + c] = f.inId[c];
+                fiN[fk * FURN_SLOTS + c] = f.inN[c];
+                foI[fk * FURN_SLOTS + c] = f.outId[c];
+                foN[fk * FURN_SLOTS + c] = f.outN[c];
+            }
+            fk++;
+        }
+        s.furnaceAnchor = fAnc;
+        s.fInItem = fiI;
+        s.fInCount = fiN;
+        s.fOutItem = foI;
+        s.fOutCount = foN;
         return s;
     }
 
@@ -2800,6 +3339,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             }
         }
         player.setPos(s.playerX, s.playerY);
+        ensureSupportedSpawn();   // 读档安全：地形因版本/生成漂移致脚下悬空或卡实体→弹回世界出生点（必在主岛上）
         inventory.loadFrom(s.invItem, s.invCount, s.invSelected);
         stats.setLucidity(s.lucidity);
         stats.setMana(s.mana);
@@ -2816,6 +3356,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         guide.setCodexOwned(s.codexOwned);   // 法典已购→不重复出售
         guide.setPresent(s.guidePresent);    // 构梦者一旦现身就常驻（不靠 coins 阈值重新判定）
         chests.clear();
+        furnaces.clear();
+        openFurnace = -1;
         if (s.chestTile != null && s.chestCap != null) {
             int off = 0;
             for (int j = 0; j < s.chestTile.length && j < s.chestCap.length; j++) {
@@ -2856,7 +3398,69 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             appearance = new PaintedLook(s.faceTemplateId, s.faceColors);
             buildDreamer();                     // 读档按存档的上色重建外观纹理
         }
+        if (s.furnaceAnchor != null) {
+            int n = s.furnaceAnchor.length;
+            for (int j = 0; j < n; j++) {
+                FurnaceData f = new FurnaceData();
+                int base = j * FURN_SLOTS;
+                for (int c = 0; c < FURN_SLOTS; c++) {
+                    int idx = base + c;
+                    if (s.fInItem != null && idx < s.fInItem.length) {
+                        f.inId[c] = s.fInItem[idx];
+                    }
+                    if (s.fInCount != null && idx < s.fInCount.length) {
+                        f.inN[c] = s.fInCount[idx];
+                    }
+                    if (s.fOutItem != null && idx < s.fOutItem.length) {
+                        f.outId[c] = s.fOutItem[idx];
+                    }
+                    if (s.fOutCount != null && idx < s.fOutCount.length) {
+                        f.outN[c] = s.fOutCount[idx];
+                    }
+                    if (f.inId[c] < 0) {
+                        f.inN[c] = 0;
+                    }
+                    if (f.outId[c] < 0) {
+                        f.outN[c] = 0;
+                    }
+                }
+                furnaces.put(s.furnaceAnchor[j], f);
+            }
+        }
+        rebuildTreeRegistry();   // 依据已应用的 edits（含玩家种/砍的树格）重建树表
+        growing.clear();
+        if (s.growAnchor != null && s.growTargetH != null && s.growAge != null) {
+            for (int j = 0; j < s.growAnchor.length
+                    && j < s.growTargetH.length && j < s.growAge.length; j++) {
+                if (trees.containsKey(s.growAnchor[j])) {
+                    growing.put(s.growAnchor[j], new GrowState(s.growAge[j], s.growTargetH[j]));
+                }
+            }
+        }
         lightDirty = true;
+    }
+
+    /**
+     * 读档安全兜底：存档只存玩家坐标 + 改动 diff，基础地形每次按种子重生成；
+     * 若世界生成器改版使主岛横向平移/地形变化，旧存档的玩家位置可能落在半空或嵌进实体。
+     * 此时（卡进实体，或脚下 48 格内无地面）弹回本次生成的世界出生点（与主岛同锚点，必定站在岛上）。
+     */
+    private void ensureSupportedSpawn() {
+        int bx = (int) Math.floor(player.centerX() / TILE);
+        int by = (int) Math.floor(player.y() / TILE);
+        boolean embedded = player.overlapsSolid(world);
+        boolean groundBelow = false;
+        for (int d = 0; d <= 48 && !groundBelow; d++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (world.isSolid(bx + dx, by - d)) {
+                    groundBelow = true;
+                    break;
+                }
+            }
+        }
+        if (embedded || !groundBelow) {
+            player.setPos(spawnX, spawnY);
+        }
     }
 
     /** 由捏脸上色数组生成/重建小人纹理（读档或切换外观后调用）。 */

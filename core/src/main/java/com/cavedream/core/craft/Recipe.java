@@ -82,6 +82,8 @@ public final class Recipe {
         r.add(new Recipe(5014, new int[]{gold}, new int[]{1}, Item.GOLD_INGOT, 1, true));
         r.add(new Recipe(5015, new int[]{platOre}, new int[]{1}, Item.PLATINUM_INGOT, 1, true));
         r.add(new Recipe(5016, new int[]{saint}, new int[]{1}, Item.SAINT_INGOT, 1, true));
+        // 树苗：2 木材 → 1 树（可放置、种下后长高；也可靠砍树掉树苗）
+        r.add(new Recipe(5018, new int[]{wood}, new int[]{2}, Item.ofBlock(BlockType.TREE), 1, true));
         return r;
     }
 }

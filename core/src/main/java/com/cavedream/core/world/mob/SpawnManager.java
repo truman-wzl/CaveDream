@@ -24,6 +24,7 @@ public final class SpawnManager {
     private final Random rnd;
     private final int maxMobs;
     private float spawnAcc;
+    private float batAcc;                 // 夜间空中蝙蝠独立计时（不受聚居安全区压制）
     private long spawnCounter;
 
     public SpawnManager(long seed, int maxMobs) {
@@ -82,15 +83,21 @@ public final class SpawnManager {
             spawnAcc -= 1f;
             trySpawn(world, playerCenterX / t, playerCenterY / t, isNight, spawnMin, spawnMax);
         }
+        // 夜间空中蝙蝠：独立计时、不受 townFactor 压制（高空氛围怪，村庄上空也该有）
+        if (isNight) {
+            batAcc += dt * 0.16f;
+            while (batAcc >= 1f && mobs.size() < maxMobs) {
+                batAcc -= 1f;
+                trySpawnBat(world, playerCenterX / t, playerCenterY / t, spawnMin, spawnMax);
+            }
+        } else {
+            batAcc = 0f;
+        }
     }
 
     private void trySpawn(LayerWorld world, double playerTileX, double playerTileY, boolean isNight, float spawnMin, float spawnMax) {
         int w = world.getWidth();
         int py = (int) Math.round(playerTileY);
-        // 夜间 40% 概率先试刷一只蝙蝠（空中）
-        if (isNight && rnd.nextFloat() < 0.4f && trySpawnBat(world, playerTileX, playerTileY, spawnMin, spawnMax)) {
-            return;
-        }
         for (int attempt = 0; attempt < 12; attempt++) {
             int side = rnd.nextBoolean() ? 1 : -1;
             int off = (int) (spawnMin + rnd.nextFloat() * (spawnMax - spawnMin));
@@ -117,7 +124,7 @@ public final class SpawnManager {
             int side = rnd.nextBoolean() ? 1 : -1;
             int off = (int) (spawnMin + rnd.nextFloat() * (spawnMax - spawnMin));
             int tx = (int) Math.round(playerTileX + side * off);
-            int ty = (int) (playerTileY - 2 - rnd.nextInt(10));   // 玩家上方空中
+            int ty = (int) (playerTileY + 2 + rnd.nextInt(10));   // 玩家上方空中（y-up→+ 为高）
             if (tx < 3 || tx > w - 4 || ty < 3) {
                 continue;
             }

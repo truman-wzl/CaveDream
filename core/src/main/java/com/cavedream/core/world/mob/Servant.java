@@ -11,7 +11,6 @@ public class Servant {
     private static final float FOLLOW_SPEED = 320f;
     private static final float ATTACK_SPEED = 260f;
     private static final float CONTACT = 16f;      // 命中距离（像素）
-    private static final float RANGE = 18f * 16f;  // 索敌半径（像素，18 格）
     private static final float ORBIT_R = 30f;      // 环绕半径（像素）
 
     private float x;
@@ -32,12 +31,18 @@ public class Servant {
         this.orbitPhase = orbitPhase;
     }
 
-    /** 每帧：有怪→飞近接触攻击；无怪→绕玩家相位环绕。永不因时间消失（返回 hp>0）。 */
+    /** 旧 4 参重载：不限视框（索敌任意最近怪），供单测与无相机上下文使用。 */
     public boolean update(float pcx, float pcy, List<Mob> mobs, float dt) {
+        return update(pcx, pcy, mobs, dt, pcx, pcy, Float.MAX_VALUE / 4f, Float.MAX_VALUE / 4f);
+    }
+
+    /** 每帧：锁定**视框内**(viewCx/Cy ± half)最近的怪→飞近接触攻击；框内无怪→绕玩家相位环绕。永不因时间消失。 */
+    public boolean update(float pcx, float pcy, List<Mob> mobs, float dt,
+                          float viewCx, float viewCy, float viewHalfW, float viewHalfH) {
         dt = Math.min(dt, 1f / 30f);
         t += dt;
         atkCd -= dt;
-        Mob target = nearestMob(pcx, pcy, mobs);
+        Mob target = nearestInView(pcx, pcy, mobs, viewCx, viewCy, viewHalfW, viewHalfH);
         float tx, ty, speed;
         if (target != null) {
             tx = target.centerX();
@@ -62,12 +67,17 @@ public class Servant {
         return hp > 0;
     }
 
-    private Mob nearestMob(float pcx, float pcy, List<Mob> mobs) {
+    /** 视框内、距玩家最近的存活怪（框外一律忽略）；无则 null。 */
+    private Mob nearestInView(float pcx, float pcy, List<Mob> mobs,
+                             float viewCx, float viewCy, float viewHalfW, float viewHalfH) {
         Mob best = null;
-        float bd = RANGE;
+        float bd = Float.MAX_VALUE;
         for (Mob m : mobs) {
             if (!m.isAlive()) {
                 continue;
+            }
+            if (Math.abs(m.centerX() - viewCx) > viewHalfW || Math.abs(m.centerY() - viewCy) > viewHalfH) {
+                continue;   // 不在视框内→不索敌
             }
             float d = (float) Math.hypot(m.centerX() - pcx, m.centerY() - pcy);
             if (d < bd) {

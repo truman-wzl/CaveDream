@@ -98,4 +98,20 @@ class WorldGeneratorTest {
         }
         assertThat(diff).isZero();
     }
+
+    /** 树已改为非实体对象：世界内所有 TREE 格均非实心（不遮光/不断连通），且确对象树已生成。 */
+    @Test
+    void generatedTreesAreNonSolidObjects() {
+        LayerWorld w = w();
+        int tree = 0;
+        for (int x = 0; x < w.getWidth(); x++) {
+            for (int y = 0; y < w.getHeight(); y++) {
+                if (w.blockAt(x, y) == BlockType.TREE) {
+                    assertThat(w.blockAt(x, y).solid()).as("树必须非实体").isFalse();
+                    tree++;
+                }
+            }
+        }
+        assertThat(tree).as("世界应生成对象树").isGreaterThan(0);
+    }
 }

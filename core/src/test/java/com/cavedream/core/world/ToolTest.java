@@ -51,4 +51,16 @@ class ToolTest {
         assertThat(Tool.byItemId(115)).isEqualTo(Tool.axe(Material.SAINT));
         assertThat(Tool.byItemId(999)).isNull();
     }
+
+    /** 工具分工铁律：斧只砍树（非树→-1）；镐挖一切但不砍树（树→-1）。 */
+    @Test
+    void axeOnlyChopsTrees_pickaxeDigsEverythingElse() {
+        assertThat(Tool.axe(Material.WOOD).digSeconds(BlockType.TREE)).isGreaterThan(0f);
+        assertThat(Tool.axe(Material.WOOD).digSeconds(BlockType.STONE)).isEqualTo(-1f);
+        assertThat(Tool.axe(Material.WOOD).digSeconds(BlockType.DIRT)).isEqualTo(-1f);
+        assertThat(Tool.axe(Material.WOOD).digSeconds(BlockType.WOOD)).isEqualTo(-1f);
+        assertThat(Tool.pickaxe(Material.WOOD).digSeconds(BlockType.TREE)).isEqualTo(-1f);
+        assertThat(Tool.pickaxe(Material.WOOD).digSeconds(BlockType.STONE)).isGreaterThan(0f);
+        assertThat(Tool.pickaxe(Material.WOOD).digSeconds(BlockType.WOOD)).isGreaterThan(0f);
+    }
 }

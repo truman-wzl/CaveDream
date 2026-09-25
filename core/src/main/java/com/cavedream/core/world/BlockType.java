@@ -32,7 +32,8 @@ public enum BlockType {
     FURNACE((short) 23, true, 0x3A3A44, "熔炉", 4, 1.0f),    // 冶炼金属锭的工作站（实体、自发光）
     CHEST((short) 24, true, 0x8A5A2B, "木箱", 0, 0.5f),     // 存储家具（右键开箱存取，内容随存档持久）
     TORCH((short) 25, false, 0xE0A030, "火把", 6, 0.2f),    // 非实体光源（不挡路，房子/照明用）
-    WOOD_WALL((short) 26, false, 0x6E5230, "木墙", 0, 0.4f); // 背景墙：非实体、可穿行，铺满屋内→合法房屋“贴满墙”要件
+    WOOD_WALL((short) 26, false, 0x6E5230, "木墙", 0, 0.4f), // 背景墙：非实体、可穿行，铺满屋内→合法房屋“贴满墙”要件
+    TREE((short) 27, false, 0x3E7A2E, "树", 0, 1.2f);        // 树：非实体整体对象（3宽×6~16高），仅底部中间格可用斧砍倒
 
     private static final BlockType[] BY_ID = new BlockType[32];
 
@@ -117,14 +118,30 @@ public enum BlockType {
         return this == TORCH;
     }
 
-    /** 摆放占地宽（格）：木箱 2、桌子/工作台 2，其余 1。 */
-    public int footprintW() {
-        return (this == CHEST || this == TABLE || this == WORKBENCH) ? 2 : 1;
+    /** 是否为“树”对象：非实体、整体贴图渲染、仅底部中间格可被斧砍倒。 */
+    public boolean isTree() {
+        return this == TREE;
     }
 
-    /** 摆放占地高（格）：木箱 2，其余 1。 */
+    /* 树对象的尺寸约定（生成与摆放/渲染共用）：宽固定 3、高 6~16。 */
+    public static final int TREE_W = 3;
+    public static final int TREE_MIN_H = 6;
+    public static final int TREE_MAX_H = 16;
+    public static final int TREE_START_H = 2;   // 刚种下的树苗高
+
+    /** 摆放占地宽（格）：木箱/熔炉/桌子/工作台 2，其余 1。 */
+    public int footprintW() {
+        return (this == CHEST || this == TABLE || this == WORKBENCH || this == FURNACE) ? 2 : 1;
+    }
+
+    /** 摆放占地高（格）：木箱/熔炉 2，其余 1。 */
     public int footprintH() {
-        return this == CHEST ? 2 : 1;
+        return (this == CHEST || this == FURNACE) ? 2 : 1;
+    }
+
+    /** 是否为“熔炉”：自带存储 + 加工（右键开熔铸界面，矿石→金属锭），区别于普通容器。 */
+    public boolean isSmelter() {
+        return this == FURNACE;
     }
 
     public int rgb() {

@@ -217,8 +217,9 @@ public final class WorldGenerator {
             carveIsland(w, icx, icy, irx, iry, H);
         }
 
-        // ---------- 7b 浮岛顶植树（天空岛不再光秃；跳过主浮岛=出生/入梦锤所在，不埋出生点） ----------
-        plantIslandTrees(w, rnd, surfTop, H, anchorX - mainRx, anchorX + mainRx);
+        // ---------- 7b 浮岛顶植树（含出生主岛，仅保护核心±10格）----------
+        //      用独立随机源（从 layerSeed 派生）→ 不漂移下游 oreVeins/植被/连通布局；plantIslandTrees 自带“离顶够高才种”护栏防封天空。
+        plantIslandTrees(w, new Random(layerSeed ^ 0x5150ADL), surfTop, H, anchorX - 10, anchorX + 10);
 
         // ---------- 7c 天空岛石核布矿（host=STONE：天空带内仅岛体为石，天然只在岛内成矿） ----------
         oreVeins(w, rnd, BlockType.IRON_ORE, BlockType.STONE, surfTop + 8, caveTop, 3000);
@@ -457,39 +458,57 @@ public final class WorldGenerator {
         treeAt(w, rnd, x, ground[x]);
     }
 
-    /** 以 (x, g) 处草地为基植一棵树（g 为该格 GRASS 的 y）；非草则跳过。 */
+    /** 以 (x, g) 处草地为基植一棵“对象树”（g 为该格 GRASS 的 y）：3 宽×6~16 高的非实体 TREE 矩形，居中于 x。 */
     private static void treeAt(LayerWorld w, Random rnd, int x, int g) {
         if (w.blockAt(x, g) != BlockType.GRASS) {
             return;
         }
-        int h = 4 + rnd.nextInt(4);
-        for (int t = 1; t <= h; t++) {
-            if (w.blockAt(x, g + t) == BlockType.AIR) {
-                w.setBlock(x, g + t, BlockType.WOOD);
+        int desired = BlockType.TREE_MIN_H + rnd.nextInt(BlockType.TREE_MAX_H - BlockType.TREE_MIN_H + 1); // 6..16
+        int ax = x - BlockType.TREE_W / 2;   // 居中：树干列=x，两侧为贴地根
+        int H = w.getHeight();
+        int placed = 0;
+        for (int t = 1; t <= desired; t++) {
+            int y = g + t;
+            if (y >= H - 10) {   // 顶部留 ~10 行净空（天空带不被占）
+                break;
             }
+            boolean rowAir = true;
+            for (int c = 0; c < BlockType.TREE_W; c++) {
+                int cx = ax + c;
+                if (cx <= 2 || cx >= w.getWidth() - 3 || w.blockAt(cx, y) != BlockType.AIR) {
+                    rowAir = false;
+                    break;
+                }
+            }
+            if (!rowAir) {
+                break;
+            }
+            for (int c = 0; c < BlockType.TREE_W; c++) {
+                w.setBlock(ax + c, y, BlockType.TREE);
+            }
+            placed++;
         }
-        int top = g + h;
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = 0; dy <= 2; dy++) {
-                int nx = x + dx, ny = top + dy;
-                if (nx > 2 && nx < w.getWidth() - 3 && ny < w.getHeight() - 3
-                        && w.blockAt(nx, ny) == BlockType.AIR) {
-                    w.setBlock(nx, ny, BlockType.LEAF);
+        // 太矮（贴地空间不足）→回退不种，避免只戳一截根。
+        if (placed < 4) {
+            for (int t = 1; t <= placed; t++) {
+                for (int c = 0; c < BlockType.TREE_W; c++) {
+                    w.setBlock(ax + c, g + t, BlockType.AIR);
                 }
             }
         }
     }
 
-    /** 扫描天空带各列的浮岛顶（草+上方空气），按概率点缀树木；[skipX0,skipX1] 为主浮岛，跳过。 */
+    /** 扫描天空带各列的浮岛顶（草+上方空气），按概率点缀对象树；[skipX0,skipX1] 为主浮岛，跳过。 */
     private static void plantIslandTrees(LayerWorld w, Random rnd, int surfTop, int H, int skipX0, int skipX1) {
         int yLo = Math.max(6, surfTop + 8);
         for (int x = 6; x < w.getWidth() - 6; x++) {
             if (x >= skipX0 && x <= skipX1) {
-                continue;   // 主浮岛留空，不埋出生点
+                continue;   // 出生点核心留空，不把人卡在树干里
             }
             for (int y = yLo; y < H - 6; y++) {
                 if (w.blockAt(x, y) == BlockType.GRASS && w.blockAt(x, y + 1) == BlockType.AIR) {
-                    if (rnd.nextInt(5) == 0) {
+                    // 树为非实体→不再遮光/断连通，无需旧“离顶≥16”护栏；treeAt 自会按 AIR 空间裁高。
+                    if (rnd.nextInt(4) == 0) {
                         treeAt(w, rnd, x, y);
                     }
                     break;   // 该列只认最下一个岛顶，避免堆叠

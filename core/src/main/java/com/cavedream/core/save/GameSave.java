@@ -52,6 +52,16 @@ public class GameSave {
     public int[] mountIdx = new int[0];        // 墙面对象（火把等）格索引
     public int[] mountBlock = new int[0];      // 对应墙面对象 block id
 
+    public int[] growAnchor = new int[0];      // 未长成树的锚点格索引（玩家种、随时间长高）
+    public int[] growTargetH = new int[0];     // 对应目标高度
+    public float[] growAge = new float[0];     // 对应已累积生长秒
+
+    public int[] furnaceAnchor = new int[0];   // 熔炉锚点格索引
+    public int[] fInItem = new int[0];         // 展平：每炉 4 输入格物品 id（-1 空）
+    public int[] fInCount = new int[0];        // 对应输入数量
+    public int[] fOutItem = new int[0];        // 展平：每炉 4 输出格物品 id（-1 空）
+    public int[] fOutCount = new int[0];       // 对应输出数量
+
     public String toJson() {
         Json json = new Json();
         json.setIgnoreUnknownFields(true);
