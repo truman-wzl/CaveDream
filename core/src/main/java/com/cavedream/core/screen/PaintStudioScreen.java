@@ -29,7 +29,9 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
 
     private final CaveDreamGame game;
     private final PlayerClass playerClass;
-    private final PaintedLook look = new PaintedLook();
+    private final PaintedLook look;
+    private final String titleText;
+    private final java.util.function.Consumer<PaintedLook> onDone;   // 非空=重绘模式（完成后回调并返回世界）
 
     private final OrthographicCamera cam = new OrthographicCamera();
     private SpriteBatch batch;
@@ -52,9 +54,28 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
     private float doneX, doneY, doneW, doneH;
     private static final int PAL_COLS = 10;                 // 调色板每行色格数（行数按 SIZE 自适应）
 
+    /** 新游戏模式：选职业后初次捣脸，完成→生成世界。 */
     public PaintStudioScreen(CaveDreamGame game, PlayerClass playerClass) {
         this.game = game;
         this.playerClass = playerClass;
+        this.look = new PaintedLook();
+        this.titleText = "描绘你的梦之躯";
+        this.onDone = null;
+        initGraphics();
+    }
+
+    /** 重绘模式（法典画板）：以 initial 为起点，完成→onDone 回调并返回世界。 */
+    public PaintStudioScreen(CaveDreamGame game, PaintedLook initial, String title,
+                             java.util.function.Consumer<PaintedLook> onDone) {
+        this.game = game;
+        this.playerClass = null;
+        this.look = initial.copy();
+        this.titleText = title;
+        this.onDone = onDone;
+        initGraphics();
+    }
+
+    private void initGraphics() {
         batch = new SpriteBatch();
         Pixmap pm = new Pixmap(1, 1, Pixmap.Format.RGB888);
         pm.setColor(1, 1, 1, 1);
@@ -64,6 +85,15 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         titleFont = CjkFonts.get(34);
         font = CjkFonts.get(18);
         smallFont = CjkFonts.get(13);
+    }
+
+    private void finishPaint() {
+        if (onDone != null) {
+            onDone.accept(look);
+            game.resumeFromPaint();
+        } else {
+            game.startNewDream(playerClass, look);
+        }
     }
 
     @Override
@@ -114,7 +144,11 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
-            game.showTitle();
+            if (onDone != null) {
+                game.resumeFromPaint();
+            } else {
+                game.showTitle();
+            }
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.NUM_1)) {
@@ -130,7 +164,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
             look.reset();
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.ENTER)) {
-            game.startNewDream(playerClass, look);
+            finishPaint();
             return;
         }
         handlePointer();
@@ -174,7 +208,7 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
             }
             // 完成
             if (inRect(mx, my, doneX, doneY, doneW, doneH)) {
-                game.startNewDream(playerClass, look);
+                finishPaint();
                 return;
             }
             // 画布：开始涂
@@ -223,10 +257,10 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
     private void draw() {
         float w = cam.viewportWidth, h = cam.viewportHeight;
         titleFont.setColor(0.95f, 0.9f, 0.72f, 1f);
-        center(titleFont, "描绘你的梦之躯", w / 2f, h - 46);
+        center(titleFont, titleText, w / 2f, h - 46);
         titleFont.setColor(1, 1, 1, 1);
         font.setColor(0.7f, 0.72f, 0.85f, 1f);
-        center(font, playerClass.cn() + "　·　整幅画布自由上色（黑白 · 彩虹）", palX + palCell * (PAL_COLS / 2f), h - 46);
+        center(font, (playerClass != null ? playerClass.cn() + "　·　" : "") + "整幅画布自由上色（黑白 · 彩虹）", palX + palCell * (PAL_COLS / 2f), h - 46);
         font.setColor(1, 1, 1, 1);
 
         drawCanvas();
@@ -234,7 +268,9 @@ public class PaintStudioScreen extends ScreenAdapter implements Disposable {
         drawButtons();
 
         smallFont.setColor(0.6f, 0.62f, 0.75f, 1f);
-        center(smallFont, "1 画笔　2 橡皮　3 填块　R 重置　Enter 完成并进入梦境　Esc 返回", w / 2f, 34);
+        center(smallFont, onDone != null
+                ? "1 画笔　2 橡皮　3 填块　R 重置　Enter 完成并返回　Esc 放弃返回"
+                : "1 画笔　2 橡皮　3 填块　R 重置　Enter 完成并进入梦境　Esc 返回", w / 2f, 34);
         smallFont.setColor(1, 1, 1, 1);
     }
 

@@ -9,7 +9,7 @@ public final class PlayerEntity {
     public static final int TILE = 16;
 
     private static final float MOVE_SPEED = 170f;
-    private static final float JUMP_VELOCITY = 450f;   // 初始跳跃高≈4.5 格（v²/2g=450²/2800≈72px）
+    private static final float JUMP_VELOCITY = 500f;   // 初始跳跃高≈5.5 格（v²/2g=500²/2800≈89px）
     private static final float GRAVITY = 1400f;
     private static final float MAX_FALL = 700f;
     private static final float EPS = 0.01f;
@@ -82,6 +82,7 @@ public final class PlayerEntity {
         }
 
         // Y 轴移动 + 落地/顶头
+        float prevBottom = y;
         y += vy * dt;
         onGround = false;
         if (overlapsSolid(world)) {
@@ -92,6 +93,19 @@ public final class PlayerEntity {
                 y = (float) Math.floor((y + height) / TILE) * TILE - height - EPS;
             }
             vy = 0;
+        } else if (vy < 0) {
+            // 单向平台：下落时若脚从上方跨过平台顶面则站上去（不阻挡水平/向上→可穿过）
+            int fx0 = (int) Math.floor(x / TILE);
+            int fx1 = (int) Math.floor((x + width) / TILE);
+            int fy = (int) Math.floor(y / TILE);
+            for (int tx = fx0; tx <= fx1; tx++) {
+                if (world.isPlatform(tx, fy) && prevBottom >= (fy + 1) * TILE - 0.5f) {
+                    y = (fy + 1) * TILE + EPS;
+                    onGround = true;
+                    vy = 0f;
+                    break;
+                }
+            }
         }
     }
 

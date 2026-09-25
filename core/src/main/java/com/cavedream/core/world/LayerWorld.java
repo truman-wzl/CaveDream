@@ -45,6 +45,16 @@ public final class LayerWorld {
         return blockAt(x, y).solid();
     }
 
+    /** 该格是否“平台”类（可站立、不挡路）。越界=false。 */
+    public boolean isPlatform(int x, int y) {
+        return inBounds(x, y) && blockAt(x, y).platform();
+    }
+
+    /** 该格是否阻挡敌怪（实体或门）；越界=true（雾墙安全网）。 */
+    public boolean blocksMob(int x, int y) {
+        return !inBounds(x, y) || blockAt(x, y).blocksMobs();
+    }
+
     public int getWidth() {
         return width;
     }

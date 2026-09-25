@@ -332,6 +332,21 @@ public final class BlockTextures implements Disposable {
                         }
                     }
                     case CLOUD, FOG -> c = shade(base, 0.88 + n * 0.24);   // 柔云低频
+                    case DOOR -> {
+                        int tx = x % 16, ty = y % 16;                        // 每 16×16 一整枚门
+                        boolean frame = tx <= 1 || tx >= 14 || ty <= 1 || ty >= 14;
+                        boolean seam = tx == 7 || tx == 8;
+                        if (frame) {
+                            c = shade(0x4A2E18, 1.0);                         // 深木框
+                        } else if (seam) {
+                            c = shade(base, 0.72);                           // 板缝
+                        } else {
+                            c = shade(base, 0.92 + ((tx / 2) % 2) * 0.16);    // 竖向木板明暗
+                        }
+                        if (tx >= 11 && tx <= 12 && ty >= 7 && ty <= 8) {
+                            c = 0xE8C34A;                                    // 金把手
+                        }
+                    }
                     default -> { }
                 }
                 a[y * SHEET + x] = 0xFF000000 | (c & 0xFFFFFF);

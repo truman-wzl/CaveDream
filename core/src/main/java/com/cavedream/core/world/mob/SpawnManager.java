@@ -1,5 +1,6 @@
 package com.cavedream.core.world.mob;
 
+import com.cavedream.core.world.BlockType;
 import com.cavedream.core.world.LayerWorld;
 import com.cavedream.core.world.PlayerEntity;
 
@@ -16,9 +17,7 @@ public final class SpawnManager {
 
     private static final float BASE_RATE = 0.22f;      // 系数=1 时每秒期望刷怪数
     private static final float SAFE_TILES = 9f;        // 玩家附近不刷（格）
-    private static final float SPAWN_MIN_TILES = 12f;  // 最近刷点距离
-    private static final float SPAWN_MAX_TILES = 40f;  // 最远刷点距离
-    private static final float DESPAWN_TILES = 56f;    // 超此距离清除
+    private static final float SPAWN_MIN_TILES = 12f;  // 最近刷点下限（会被视口半宽抬高→视野外才刷）
 
     private final List<Mob> mobs = new ArrayList<>();
     private final List<Mob> killed = new ArrayList<>();   // 本帧死亡（被击杀）的怪→供上层结算掉落
@@ -37,6 +36,14 @@ public final class SpawnManager {
         return isNight ? 1.5f : 0.5f;
     }
 
+    /** 聚居安全区因子：同屏≥3 居民=小镇→0（不刷）；≥1 居民=房屋安全区→0.2；否则 1。 */
+    public static float townFactor(int nearbyResidents) {
+        if (nearbyResidents >= 3) {
+            return 0f;
+        }
+        return nearbyResidents >= 1 ? 0.2f : 1f;
+    }
+
     public List<Mob> mobs() {
         return mobs;
     }
@@ -51,8 +58,11 @@ public final class SpawnManager {
         return out;
     }
 
-    public void update(LayerWorld world, float playerCenterX, float playerCenterY, boolean isNight, float dt) {
+    public void update(LayerWorld world, float playerCenterX, float playerCenterY, boolean isNight, float dt, float viewHalfTiles, int nearbyResidents) {
         float t = PlayerEntity.TILE;
+        float spawnMin = Math.max(SPAWN_MIN_TILES, viewHalfTiles + 2f);   // 至少落在视野外一点
+        float spawnMax = spawnMin + 26f;
+        float despawn = spawnMax + 18f;
         for (Iterator<Mob> it = mobs.iterator(); it.hasNext(); ) {
             Mob m = it.next();
             m.update(world, playerCenterX, playerCenterY, dt);
@@ -60,38 +70,62 @@ public final class SpawnManager {
             if (!m.isAlive()) {
                 killed.add(m);          // 死亡（无论近战/弹道/仆从）→集中掉币入口
                 it.remove();
-            } else if (dist > DESPAWN_TILES) {
+            } else if (dist > despawn) {
                 it.remove();            // 超距清除≠击杀，不掉币
             }
         }
-        spawnAcc += dt * BASE_RATE * coefficient(isNight);
+        spawnAcc += dt * BASE_RATE * coefficient(isNight) * townFactor(nearbyResidents);   // 聚居安全区降刷怪率
         if (spawnAcc > 4f) {
             spawnAcc = 4f;   // 累积上限，防回到场景瞬间爆刷
         }
         while (spawnAcc >= 1f && mobs.size() < maxMobs) {
             spawnAcc -= 1f;
-            trySpawn(world, playerCenterX / t, playerCenterY / t);
+            trySpawn(world, playerCenterX / t, playerCenterY / t, isNight, spawnMin, spawnMax);
         }
     }
 
-    private void trySpawn(LayerWorld world, double playerTileX, double playerTileY) {
+    private void trySpawn(LayerWorld world, double playerTileX, double playerTileY, boolean isNight, float spawnMin, float spawnMax) {
         int w = world.getWidth();
         int py = (int) Math.round(playerTileY);
+        // 夜间 40% 概率先试刷一只蝙蝠（空中）
+        if (isNight && rnd.nextFloat() < 0.4f && trySpawnBat(world, playerTileX, playerTileY, spawnMin, spawnMax)) {
+            return;
+        }
         for (int attempt = 0; attempt < 12; attempt++) {
             int side = rnd.nextBoolean() ? 1 : -1;
-            int off = (int) (SPAWN_MIN_TILES + rnd.nextFloat() * (SPAWN_MAX_TILES - SPAWN_MIN_TILES));
+            int off = (int) (spawnMin + rnd.nextFloat() * (spawnMax - spawnMin));
             int tx = (int) Math.round(playerTileX + side * off);
             if (tx < 3 || tx > w - 4) {
                 continue;
             }
-            // 在玩家同一高度带内找可站立的实心面（顶两格为空）→避免在浮岛旁的空天柱一路找到地底
+            // 实心地面 + 上方两格皆 AIR（有背景墙/门则视为室内→不刷怪）
             for (int y = py + 2; y >= py - 16 && y >= 1; y--) {
-                if (world.isSolid(tx, y) && !world.isSolid(tx, y + 1) && !world.isSolid(tx, y + 2)) {
+                if (world.isSolid(tx, y) && world.blockAt(tx, y + 1) == BlockType.AIR && world.blockAt(tx, y + 2) == BlockType.AIR) {
                     mobs.add(Slime.onFloor(world, tx, y, rnd.nextInt(Slime.COLOR_COUNT),
                             spawnCounter++ * 2654435761L));
                     return;
                 }
             }
         }
+    }
+
+    /** 夜间空中刷一只蝙蝠（玩家上方视野外找连续空气格）。 */
+    private boolean trySpawnBat(LayerWorld world, double playerTileX, double playerTileY, float spawnMin, float spawnMax) {
+        int w = world.getWidth();
+        int t = PlayerEntity.TILE;
+        for (int attempt = 0; attempt < 8; attempt++) {
+            int side = rnd.nextBoolean() ? 1 : -1;
+            int off = (int) (spawnMin + rnd.nextFloat() * (spawnMax - spawnMin));
+            int tx = (int) Math.round(playerTileX + side * off);
+            int ty = (int) (playerTileY - 2 - rnd.nextInt(10));   // 玩家上方空中
+            if (tx < 3 || tx > w - 4 || ty < 3) {
+                continue;
+            }
+            if (world.blockAt(tx, ty) == BlockType.AIR && world.blockAt(tx, ty + 1) == BlockType.AIR) {
+                mobs.add(new Bat(tx * (float) t, ty * (float) t, spawnCounter++ * 2654435761L));
+                return true;
+            }
+        }
+        return false;
     }
 }

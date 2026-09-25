@@ -49,4 +49,9 @@ public class AccountDao {
     public void touchLogin(long accountId) {
         jdbc.update("UPDATE t_account SET last_login_at = NOW() WHERE id = ?", accountId);
     }
+
+    /** 用户中心：修改昵称。 */
+    public void updateNickname(long accountId, String nickname) {
+        jdbc.update("UPDATE t_account SET nickname = ? WHERE id = ?", nickname, accountId);
+    }
 }

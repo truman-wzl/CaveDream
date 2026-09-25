@@ -18,7 +18,7 @@ import java.util.Map;
  */
 public record Item(int id, String key, String cn, Kind kind, BlockType block) {
 
-    public enum Kind { BLOCK, TOOL, WEAPON, COIN }
+    public enum Kind { BLOCK, TOOL, WEAPON, COIN, MATERIAL }
 
     public boolean placeable() {
         return kind == Kind.BLOCK && block != null && block != BlockType.AIR;
@@ -45,6 +45,13 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
     /** 铸梦币（硬通货，拾取即入账、不占背包格）；id 段 400。 */
     public static final Item COIN = new Item(400, "COIN", "铸梦币", Kind.COIN, null);
 
+    /** 金属锭（熔炉冶炼矿石所得）；材料 id 段 300+。 */
+    public static final Item IRON_INGOT = new Item(300, "IRON_INGOT", "铁锭", Kind.MATERIAL, null);
+    public static final Item GOLD_INGOT = new Item(301, "GOLD_INGOT", "金锭", Kind.MATERIAL, null);
+    public static final Item PLATINUM_INGOT = new Item(302, "PLATINUM_INGOT", "白金锭", Kind.MATERIAL, null);
+    public static final Item SAINT_INGOT = new Item(303, "SAINT_INGOT", "圣锭", Kind.MATERIAL, null);
+    private static final Item[] MATERIALS = {IRON_INGOT, GOLD_INGOT, PLATINUM_INGOT, SAINT_INGOT};
+
     /** 起始三件套：木镐 + 木斧 + 职业主武器（默认战士剑）。 */
     public static final Item[] STARTER_KIT = {WOOD_PICKAXE, WOOD_AXE, WARRIOR_SWORD};
 
@@ -65,6 +72,9 @@ public record Item(int id, String key, String cn, Kind kind, BlockType block) {
             register(it);
         }
         register(COIN);
+        for (Item it : MATERIALS) {
+            register(it);
+        }
     }
 
     private static void register(Item it) {

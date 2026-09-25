@@ -14,8 +14,15 @@ $lnk = Join-Path $desktop 'CaveDream.lnk'
 
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut($lnk)
-if ($exe) {
-    # Prefer the jpackage launcher exe (clean, taskbar groups by game, pinnable)
+$allPs = Join-Path $app.FullName 'start-all.ps1'
+$psExe = Join-Path $env:Windir 'System32\WindowsPowerShell\v1.0\powershell.exe'
+if ((Test-Path $allPs) -and (Test-Path $psExe)) {
+    # Preferred: auto-start launcher (boots backend if needed, waits for port, then the game)
+    $sc.TargetPath = $psExe
+    $sc.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $allPs + '"'
+    $sc.WorkingDirectory = $app.FullName
+} elseif ($exe) {
+    # jpackage launcher exe (no auto-start backend)
     $sc.TargetPath = $exe.FullName
     $sc.WorkingDirectory = $app.FullName
 } else {

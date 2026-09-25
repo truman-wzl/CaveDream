@@ -19,6 +19,8 @@ import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
+import com.badlogic.gdx.scenes.scene2d.InputListener;
+import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
@@ -43,7 +45,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     private static final String SERVER = "http://localhost:8081";
     private static final String[] MENU = {"新的梦", "继续游戏", "账号", "退出游戏"};
 
-    private enum Mode { LOGIN, REGISTER, RESET }
+    private enum Mode { LOGIN, REGISTER, RESET, USER }
 
     private final CaveDreamGame game;
     private final CloudAuthClient auth = new CloudAuthClient(SERVER);
@@ -71,11 +73,16 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
     private Table panel;
     private boolean accountOpen;
     private Mode mode = Mode.LOGIN;
-    private TextField tfEmail, tfPass, tfNick, tfCode;
-    private Table rowCode, rowNick;
+    private TextField tfEmail, tfPass, tfNick, tfCode, tfUser;
+    private Table rowCode, rowNick, rowUser, rowEmail, rowPass, modes;
+    private Label titleLabel;
+    private Label emailCaption;
     private TextButton btnSendCode;
-    private TextButton btnLogin, btnRegister, btnReset, btnSubmit, btnClose;
+    private TextButton btnLogin, btnRegister, btnReset, btnSubmit, btnClose, btnLogout;
     private Label statusLabel;
+    private String sessionToken;   // 登录成功后持有，供改昵称/登出
+    private boolean loggingOut;
+    private volatile boolean sessionInvalid;   // 启动校验发现 token 失效→清成未登录
     private volatile CloudAuthClient.Result pendingResult;
     private boolean busy;
 
@@ -106,6 +113,25 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         stateTime = 0;
         selected = 0;
         fadeIn = 0f;
+        validateSession();
+    }
+
+    /** 启动校验：本地存了登录态则后台问服务端 token 是否仍有效，失效则清。 */
+    private void validateSession() {
+        if (signedInAs == null) {
+            return;
+        }
+        final String tok = game.sessionToken();
+        if (tok == null || tok.isBlank()) {
+            signedInAs = null;
+            return;
+        }
+        new Thread(() -> {
+            CloudAuthClient.Result r = auth.me(tok);
+            if (!r.ok()) {
+                sessionInvalid = true;
+            }
+        }, "cavedream-validate").start();
     }
 
     @Override
@@ -115,6 +141,14 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
 
     @Override
     public void render(float delta) {
+        if (sessionInvalid) {
+            sessionInvalid = false;
+            signedInAs = null;
+            game.setSession(null, null);
+            if (accountOpen) {
+                setMode(Mode.LOGIN);
+            }
+        }
         stateTime += delta;
         fadeIn = Math.min(1f, fadeIn + delta / 0.6f);   // 黑屏→主菜单 0.6s 淡入
         consumePendingResult();
@@ -202,28 +236,32 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         stage = new Stage(new StretchViewport(W, H, camera));
         Skin skin = new Skin();
         skin.add("white", new TextureRegion(pixel));
+        TextureRegionDrawable white = new TextureRegionDrawable(skin.getRegion("white"));
 
-        Drawable fieldBg = new TextureRegionDrawable(skin.getRegion("white"))
-                .tint(new Color(0.10f, 0.12f, 0.20f, 0.95f));
+        // 输入框：深木凹槽
+        Drawable fieldBg = white.tint(new Color(0.14f, 0.10f, 0.06f, 0.96f));
         TextField.TextFieldStyle tfStyle = new TextField.TextFieldStyle();
         tfStyle.font = uiFont;
-        tfStyle.fontColor = Color.WHITE;
+        tfStyle.fontColor = new Color(0.96f, 0.92f, 0.82f, 1f);
         tfStyle.background = fieldBg;
-        tfStyle.cursor = new TextureRegionDrawable(skin.getRegion("white")).tint(Color.YELLOW);
-        tfStyle.selection = new TextureRegionDrawable(skin.getRegion("white")).tint(new Color(0.3f, 0.4f, 0.8f, 0.6f));
+        tfStyle.cursor = white.tint(Color.YELLOW);
+        tfStyle.selection = white.tint(new Color(0.5f, 0.38f, 0.16f, 0.6f));
 
+        // 木按钮：常态木色 / 悬停浮亮 / 按下压暗 / 选中描金
         TextButton.TextButtonStyle btnStyle = new TextButton.TextButtonStyle();
         btnStyle.font = uiFont;
-        btnStyle.fontColor = new Color(0.9f, 0.9f, 1f, 1f);
-        btnStyle.up = new TextureRegionDrawable(skin.getRegion("white")).tint(new Color(0.18f, 0.2f, 0.34f, 1f));
-        btnStyle.down = new TextureRegionDrawable(skin.getRegion("white")).tint(new Color(0.32f, 0.36f, 0.6f, 1f));
-        btnStyle.checked = new TextureRegionDrawable(skin.getRegion("white")).tint(new Color(0.5f, 0.42f, 0.16f, 1f));
+        btnStyle.fontColor = new Color(0.98f, 0.93f, 0.8f, 1f);
+        btnStyle.up = white.tint(new Color(0.42f, 0.28f, 0.15f, 1f));
+        btnStyle.over = white.tint(new Color(0.60f, 0.42f, 0.21f, 1f));
+        btnStyle.down = white.tint(new Color(0.30f, 0.19f, 0.10f, 1f));
+        btnStyle.checked = white.tint(new Color(0.74f, 0.55f, 0.22f, 1f));
 
-        Label.LabelStyle labelStyle = new Label.LabelStyle(uiFont, new Color(0.65f, 0.7f, 0.9f, 1f));
+        Label.LabelStyle labelStyle = new Label.LabelStyle(uiFont, new Color(0.86f, 0.74f, 0.5f, 1f));
 
         tfEmail = new TextField("", tfStyle);
         tfPass = new TextField("", tfStyle);
         tfPass.setPasswordCharacter('*');
+        tfUser = new TextField("", tfStyle);
         tfNick = new TextField("", tfStyle);
         tfCode = new TextField("", tfStyle);
 
@@ -232,6 +270,7 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         btnReset = new TextButton("找回密码", btnStyle);
         btnSubmit = new TextButton("登录", btnStyle);
         btnSendCode = new TextButton("发送验证码", btnStyle);
+        btnLogout = new TextButton("登出", btnStyle);
         btnClose = new TextButton("关闭", btnStyle);
         statusLabel = new Label("欢迎入梦。", labelStyle);
 
@@ -245,43 +284,53 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
             @Override public void clicked(InputEvent e, float x, float y) { submit(); } });
         btnSendCode.addListener(new ClickListener() {
             @Override public void clicked(InputEvent e, float x, float y) { sendCode(); } });
+        btnLogout.addListener(new ClickListener() {
+            @Override public void clicked(InputEvent e, float x, float y) { doLogout(); } });
         btnClose.addListener(new ClickListener() {
             @Override public void clicked(InputEvent e, float x, float y) { closeAccount(); } });
 
-        Drawable panelBg = new TextureRegionDrawable(skin.getRegion("white"))
-                .tint(new Color(0.06f, 0.07f, 0.13f, 0.96f));
+        Drawable panelBg = white.tint(new Color(0.26f, 0.17f, 0.09f, 0.97f));   // 木板底
         panel = new Table();
         panel.setBackground(panelBg);
-        panel.pad(18);
+        panel.pad(20);
         panel.defaults().spaceBottom(8);
 
-        Table modes = new Table();
+        modes = new Table();
         modes.defaults().spaceRight(8);
         modes.add(btnLogin);
         modes.add(btnRegister);
         modes.add(btnReset);
 
-        Label titleLabel = new Label("账号中心", labelStyle);
+        titleLabel = new Label("账号中心", labelStyle);
         titleLabel.setFontScale(1.6f);
         panel.add(titleLabel).row();
         panel.add(modes).row();
-        panel.add(row("邮箱", tfEmail)).width(460).row();
+        rowEmail = new Table();
+        rowEmail.defaults().spaceRight(8);
+        emailCaption = new Label("账号(用户名/邮箱)", labelStyle);
+        rowEmail.add(emailCaption).width(130);
+        rowEmail.add(tfEmail).expandX().fillX().height(34);
+        panel.add(rowEmail).width(500).row();
+        rowUser = row("用户名", tfUser);
         rowCode = new Table();
         rowCode.defaults().spaceRight(8);
         rowCode.add(btnSendCode);
-        Label.LabelStyle codeLs = new Label.LabelStyle(uiFont, new Color(0.55f, 0.6f, 0.8f, 1f));
+        Label.LabelStyle codeLs = new Label.LabelStyle(uiFont, new Color(0.7f, 0.6f, 0.42f, 1f));
         rowCode.add(new Label("验证码", codeLs)).width(64);
         rowCode.add(tfCode).expandX().fillX().height(34);
         rowNick = row("昵称", tfNick);
-        panel.add(row("密码", tfPass)).width(460).row();
-        panel.add(rowNick).width(460).row();
-        panel.add(rowCode).width(460).row();
+        panel.add(rowUser).width(500).row();
+        rowPass = row("密码", tfPass);
+        panel.add(rowPass).width(500).row();
+        panel.add(rowNick).width(500).row();
+        panel.add(rowCode).width(500).row();
         Table actions = new Table();
         actions.defaults().spaceRight(8);
         actions.add(btnSubmit);
+        actions.add(btnLogout);
         actions.add(btnClose);
         panel.add(actions).left().row();
-        panel.add(statusLabel).left().width(420).row();
+        panel.add(statusLabel).left().width(440).row();
 
         panel.pack();
         panel.setPosition((W - panel.getWidth()) / 2f, (H - panel.getHeight()) / 2f);
@@ -289,19 +338,28 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         setMode(Mode.LOGIN);
     }
 
+    /** 悬停反馈：靠 over 木色高亮（不用位移，避免按钮参差）。 */
     private Table row(String caption, TextField field) {
         Table t = new Table();
         t.defaults().spaceRight(8);
-        Label.LabelStyle ls = new Label.LabelStyle(uiFont, new Color(0.55f, 0.6f, 0.8f, 1f));
-        t.add(new Label(caption, ls)).width(64);
+        Label.LabelStyle ls = new Label.LabelStyle(uiFont, new Color(0.86f, 0.74f, 0.5f, 1f));
+        t.add(new Label(caption, ls)).width(130);
         t.add(field).expandX().fillX().height(34);
         return t;
     }
 
     private void setMode(Mode m) {
         mode = m;
-        rowNick.setVisible(m == Mode.REGISTER);
-        rowCode.setVisible(m != Mode.LOGIN);
+        boolean user = m == Mode.USER;
+        titleLabel.setText(user ? "用户中心" : "账号中心");
+        emailCaption.setText(m == Mode.LOGIN ? "账号(用户名/邮箱)" : "邮箱");
+        modes.setVisible(!user);
+        rowEmail.setVisible(!user);
+        rowUser.setVisible(m == Mode.REGISTER);
+        rowPass.setVisible(!user);
+        rowNick.setVisible(m == Mode.REGISTER || user);
+        rowCode.setVisible(m == Mode.REGISTER || m == Mode.RESET);
+        btnLogout.setVisible(user);
         btnLogin.setChecked(m == Mode.LOGIN);
         btnRegister.setChecked(m == Mode.REGISTER);
         btnReset.setChecked(m == Mode.RESET);
@@ -309,14 +367,19 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
             case LOGIN -> "登录";
             case REGISTER -> "注册";
             case RESET -> "重置密码";
+            case USER -> "保存昵称";
         });
+        if (user) {
+            tfNick.setText(signedInAs == null ? "" : signedInAs);
+            statusLabel.setText("当前登录：" + signedInAs);
+        }
         panel.invalidateHierarchy();
     }
 
     private void openAccount() {
         accountOpen = true;
-        statusLabel.setText(signedInAs == null ? "欢迎入梦。" : "已登录：" + signedInAs);
         Gdx.input.setInputProcessor(stage);
+        setMode(signedInAs != null ? Mode.USER : Mode.LOGIN);
     }
 
     private void closeAccount() {
@@ -329,25 +392,57 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         if (busy) {
             return;
         }
-        String email = tfEmail.getText().trim();
+        if (mode == Mode.USER) {
+            saveNickname();
+            return;
+        }
+        String account = tfEmail.getText().trim();
         String pass = tfPass.getText();
-        if (email.isEmpty() || pass.isEmpty()) {
-            statusLabel.setText("邮箱和密码不能为空");
+        if (account.isEmpty() || pass.isEmpty()) {
+            statusLabel.setText("账号和密码不能为空");
             return;
         }
         busy = true;
         statusLabel.setText("连接中……");
         Mode m = mode;
+        String user = tfUser.getText().trim();
         String nick = tfNick.getText().trim();
         String code = tfCode.getText().trim();
         new Thread(() -> {
             CloudAuthClient.Result r = switch (m) {
-                case LOGIN -> auth.login(email, pass);
-                case REGISTER -> auth.register(email, code, pass, nick);
-                case RESET -> auth.resetPassword(email, code, pass);
+                case LOGIN -> auth.login(account, pass);
+                case REGISTER -> auth.register(account, user, code, pass, nick);
+                case RESET -> auth.resetPassword(account, code, pass);
+                default -> null;
             };
             pendingResult = r;
         }, "cavedream-auth").start();
+    }
+
+    /** 用户中心：保存新昵称。 */
+    private void saveNickname() {
+        if (busy) {
+            return;
+        }
+        String nick = tfNick.getText().trim();
+        if (nick.isEmpty()) {
+            statusLabel.setText("昵称不能为空");
+            return;
+        }
+        busy = true;
+        statusLabel.setText("保存中……");
+        new Thread(() -> pendingResult = auth.changeNickname(game.sessionToken(), nick), "cavedream-nick").start();
+    }
+
+    /** 用户中心：登出（吊销会话 + 清本地）。 */
+    private void doLogout() {
+        if (busy) {
+            return;
+        }
+        busy = true;
+        loggingOut = true;
+        statusLabel.setText("登出中……");
+        new Thread(() -> pendingResult = auth.logout(game.sessionToken()), "cavedream-logout").start();
     }
 
     /** 发送邮箱验证码（注册/找回模式）。 */
@@ -374,9 +469,26 @@ public class TitleScreen extends ScreenAdapter implements Disposable {
         pendingResult = null;
         busy = false;
         statusLabel.setText(r.message());
+        if (mode == Mode.USER && r.ok()) {
+            if (loggingOut) {
+                loggingOut = false;
+                signedInAs = null;
+                sessionToken = null;
+                game.setSession(null, null);
+                statusLabel.setText("已登出");
+                setMode(Mode.LOGIN);
+            } else if (r.nickname() != null && !r.nickname().isBlank()) {
+                signedInAs = r.nickname();
+                game.setSession(game.sessionToken(), signedInAs);
+                statusLabel.setText("昵称已更新：" + signedInAs);
+            }
+            return;
+        }
         if (r.ok() && r.token() != null) {
+            sessionToken = r.token();
             signedInAs = r.nickname() == null ? tfEmail.getText().trim() : r.nickname();
-            saveSession(r.token(), signedInAs);
+            saveSession(sessionToken, signedInAs);
+            setMode(Mode.USER);
         }
     }
 

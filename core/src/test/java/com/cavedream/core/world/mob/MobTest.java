@@ -71,8 +71,8 @@ class MobTest {
         SpawnManager night = new SpawnManager(42, 40);
         int steps = 60 * 60;                                    // 60 秒
         for (int i = 0; i < steps; i++) {
-            day.update(world, 100 * T, 10 * T, false, 1 / 60f);
-            night.update(world, 100 * T, 10 * T, true, 1 / 60f);
+            day.update(world, 100 * T, 10 * T, false, 1 / 60f, 10f, 0);
+            night.update(world, 100 * T, 10 * T, true, 1 / 60f, 10f, 0);
         }
         assertThat(night.mobs().size()).isGreaterThan(day.mobs().size());
     }

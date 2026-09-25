@@ -11,6 +11,8 @@ $jdk = $env:JAVA_HOME
 Write-Host '==> 1/4 gradle fat jar'
 & "$root\gradlew.bat" :desktop:fatJar --console=plain -q
 if ($LASTEXITCODE -ne 0) { throw 'fatJar build failed' }
+& "$root\gradlew.bat" :server:installDist --console=plain -q
+if ($LASTEXITCODE -ne 0) { throw 'server installDist build failed' }
 
 $jarDir = "$root\build\exe-staging"
 $distDir = "$root\build\dist"
@@ -41,6 +43,16 @@ if (Test-Path $appPath) { Remove-Item $appPath -Recurse -Force }
     --java-options '-Xmx1g' `
     --java-options '-Dfile.encoding=UTF-8'
 if ($LASTEXITCODE -ne 0) { throw 'jpackage failed' }
+
+Write-Host '==> 3.5 bundle server + auto-start launcher'
+$serverLibSrc = Join-Path $root 'server\build\install\server\lib'
+$serverLibDst = Join-Path $appPath 'server\lib'
+if (Test-Path $serverLibDst) { Remove-Item $serverLibDst -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $serverLibDst | Out-Null
+Copy-Item (Join-Path $serverLibSrc '*') $serverLibDst -Recurse -Force
+$allLauncher = Join-Path $appPath 'start-all.ps1'
+Copy-Item (Join-Path $root 'tools\start-all-template.ps1') $allLauncher -Force
+Write-Host ('wrote auto-start launcher: ' + $allLauncher)
 
 Write-Host '==> 4/4 emit bat launcher + verify via bundled JRE'
 $javaOk = Test-Path (Join-Path $appPath 'runtime\bin\java.exe')

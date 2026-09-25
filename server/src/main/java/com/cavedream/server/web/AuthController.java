@@ -30,10 +30,13 @@ public class AuthController {
     public record SendCodeReq(String email) {
     }
 
-    public record RegisterReq(String email, String code, String password, String nickname) {
+    public record RegisterReq(String username, String email, String code, String password, String nickname) {
     }
 
     public record LoginReq(String account, String password) {
+    }
+
+    public record NicknameReq(String nickname) {
     }
 
     public record ResetReq(String email, String code, String newPassword) {
@@ -85,8 +88,12 @@ public class AuthController {
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegisterReq req) {
         String email = trim(req.email());
+        String username = trim(req.username());
         if (!EMAIL.matcher(email).matches()) {
             return badRequest("邮箱格式不正确");
+        }
+        if (username.length() < 3 || username.length() > 20) {
+            return badRequest("用户名长度需 3~20 字符");
         }
         if (req.password() == null || req.password().length() < 6) {
             return badRequest("密码至少 6 位");
@@ -97,9 +104,12 @@ public class AuthController {
         if (accounts.findByAccount(email) != null) {
             return conflict("该邮箱已注册");
         }
+        if (accounts.findByAccount(username) != null) {
+            return conflict("该用户名已被占用");
+        }
         String salt = PasswordUtil.newSalt();
-        String nick = trim(req.nickname()).isEmpty() ? email.substring(0, email.indexOf('@')) : req.nickname().trim();
-        Long id = accounts.create(email, email,
+        String nick = trim(req.nickname()).isEmpty() ? username : req.nickname().trim();
+        Long id = accounts.create(username, email,
                 PasswordUtil.hash(req.password(), salt), salt, "", "", nick);
         return ResponseEntity.ok(Map.of("accountId", id, "message", "账号已创建"));
     }
@@ -110,7 +120,7 @@ public class AuthController {
         Map<String, Object> row = account.isEmpty() ? null : accounts.findByAccount(account);
         if (row == null || !PasswordUtil.matches(req.password(),
                 (String) row.get("salt"), (String) row.get("password_hash"))) {
-            return unauthorized("邮箱或密码不正确");
+            return unauthorized("账号或密码不正确");
         }
         long accountId = ((Number) row.get("id")).longValue();
         accounts.touchLogin(accountId);
@@ -144,6 +154,32 @@ public class AuthController {
     public ResponseEntity<?> logout(@RequestHeader(value = "X-Token", required = false) String token) {
         sessions.revoke(token);
         return ResponseEntity.ok(Map.of("message", "已登出"));
+    }
+
+    /** 会话校验：客户端启动时凭 token 验证是否仍有效（后端重启/账号删除则失效）。 */
+    @PostMapping("/me")
+    public ResponseEntity<?> me(@RequestHeader(value = "X-Token", required = false) String token) {
+        Long accountId = sessions.resolve(token);
+        if (accountId == null) {
+            return unauthorized("会话失效，请重新登录");
+        }
+        return ResponseEntity.ok(Map.of("message", "有效", "accountId", accountId));
+    }
+
+    /** 用户中心：登录态下修改昵称（凭 X-Token 定位账号）。 */
+    @PostMapping("/nickname")
+    public ResponseEntity<?> nickname(@RequestHeader(value = "X-Token", required = false) String token,
+                                      @RequestBody NicknameReq req) {
+        Long accountId = sessions.resolve(token);
+        if (accountId == null) {
+            return unauthorized("会话失效，请重新登录");
+        }
+        String nick = trim(req.nickname());
+        if (nick.isEmpty() || nick.length() > 24) {
+            return badRequest("昵称需 1~24 字符");
+        }
+        accounts.updateNickname(accountId, nick);
+        return ResponseEntity.ok(Map.of("message", "昵称已更新", "nickname", nick));
     }
 
     /** 验证码校验：dev 主码优先放行（不消费邮箱验证码）。 */

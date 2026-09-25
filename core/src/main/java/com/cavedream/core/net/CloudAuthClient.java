@@ -39,12 +39,28 @@ public class CloudAuthClient {
         return post("/api/auth/send-code", Map.of("email", email));
     }
 
-    public Result register(String email, String code, String password, String nickname) {
+    public Result register(String email, String username, String code, String password, String nickname) {
         return post("/api/auth/register", Map.of(
                 "email", email,
+                "username", username,
                 "code", code,
                 "password", password,
                 "nickname", nickname));
+    }
+
+    /** 用户中心：登录态下改昵称（凭 token）。 */
+    public Result changeNickname(String token, String nickname) {
+        return postAuth("/api/auth/nickname", Map.of("nickname", nickname), token);
+    }
+
+    /** 登出（吊销服务端会话）。 */
+    public Result logout(String token) {
+        return postAuth("/api/auth/logout", Map.of(), token);
+    }
+
+    /** 会话校验：token 是否仍有效（ok=有效）。 */
+    public Result me(String token) {
+        return postAuth("/api/auth/me", Map.of(), token);
     }
 
     public Result login(String account, String password) {
@@ -62,21 +78,28 @@ public class CloudAuthClient {
 
     @SuppressWarnings("unchecked")
     private Result post(String path, Map<String, Object> body) {
+        return postAuth(path, body, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Result postAuth(String path, Map<String, Object> body, String token) {
         try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + path))
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                     .timeout(Duration.ofSeconds(5))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)))
-                    .build();
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+                    .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
+            if (token != null && !token.isBlank()) {
+                builder.header("X-Token", token);
+            }
+            HttpResponse<String> resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             Map<String, Object> map = resp.body() == null || resp.body().isBlank()
                     ? Map.of() : json.readValue(resp.body(), Map.class);
             boolean ok = resp.statusCode() >= 200 && resp.statusCode() < 300;
             String msg = String.valueOf(map.getOrDefault(ok ? "message" : "error",
                     ok ? "OK" : "HTTP " + resp.statusCode()));
-            String token = map.get("token") == null ? null : String.valueOf(map.get("token"));
+            String tok = map.get("token") == null ? null : String.valueOf(map.get("token"));
             String nick = map.get("nickname") == null ? null : String.valueOf(map.get("nickname"));
-            return new Result(ok, msg, token, nick);
+            return new Result(ok, msg, tok, nick);
         } catch (Exception e) {
             return Result.fail("无法连接服务器：" + e.getClass().getSimpleName());
         }

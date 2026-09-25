@@ -22,7 +22,17 @@ public enum BlockType {
     IRON_ORE((short) 13, true, 0x9AA0A8, "铁矿", 0, 1.5f),
     GOLD_ORE((short) 14, true, 0xD9A94A, "金矿", 0, 1.8f),
     PLATINUM_ORE((short) 15, true, 0xDCE6EF, "白金矿", 0, 2.2f),
-    SAINT_ORE((short) 16, true, 0xB46BE6, "圣矿", 8, 2.8f);  // 圣矿自发光（顶层稀有矿）
+    SAINT_ORE((short) 16, true, 0xB46BE6, "圣矿", 8, 2.8f),  // 圣矿自发光（顶层稀有矿）
+    DOOR((short) 17, false, 0x6E4A28, "木门", 0, 0.5f),   // 可穿过的木门（村庄/房屋用）
+    PLATFORM((short) 18, false, 0xB0824A, "木平台", 0, 0.3f),   // 可站立、不挡路（家具基元）
+    TABLE((short) 19, false, 0x9A6A38, "桌子", 0, 0.4f),        // 平台类家具（不挡路）
+    CHAIR((short) 20, false, 0x8A5A2B, "椅子", 0, 0.35f),       // 平台类家具
+    WORKBENCH((short) 21, false, 0x6E4A28, "工作台", 0, 0.5f),   // 平台类家具（合成站）
+    BED((short) 22, false, 0xB04A5A, "床", 0, 0.5f),           // 平台类家具（出生点）
+    FURNACE((short) 23, true, 0x3A3A44, "熔炉", 4, 1.0f),    // 冶炼金属锭的工作站（实体、自发光）
+    CHEST((short) 24, true, 0x8A5A2B, "木箱", 0, 0.5f),     // 存储家具（右键开箱存取，内容随存档持久）
+    TORCH((short) 25, false, 0xE0A030, "火把", 6, 0.2f),    // 非实体光源（不挡路，房子/照明用）
+    WOOD_WALL((short) 26, false, 0x6E5230, "木墙", 0, 0.4f); // 背景墙：非实体、可穿行，铺满屋内→合法房屋“贴满墙”要件
 
     private static final BlockType[] BY_ID = new BlockType[32];
 
@@ -75,6 +85,36 @@ public enum BlockType {
 
     public boolean solid() {
         return solid;
+    }
+
+    /** 是否为“平台”类：可站立于其上、但不阻挡水平/向上通行（一次性平台）。 */
+    public boolean platform() {
+        return this == PLATFORM || this == TABLE || this == CHAIR || this == WORKBENCH || this == BED;
+    }
+
+    /** 存储容量（>0 即可作为容器、右键存取）；新存储摆件在此登记。 */
+    public int storageCapacity() {
+        return this == CHEST ? 40 : 0;
+    }
+
+    /** 是否阻挡敌怪：实体方块 + 门（门对玩家可穿、对怪是屏障；史莱姆等非穿墙类不能过门）。 */
+    public boolean blocksMobs() {
+        return solid || this == DOOR;
+    }
+
+    /** 背景墙类：非实体、可穿行，但作为“墙”参与房屋判定与阻挡刷怪。 */
+    public boolean backgroundWall() {
+        return this == WOOD_WALL;
+    }
+
+    /** 摆放占地宽（格）：木箱 2、桌子/工作台 2，其余 1。 */
+    public int footprintW() {
+        return (this == CHEST || this == TABLE || this == WORKBENCH) ? 2 : 1;
+    }
+
+    /** 摆放占地高（格）：木箱 2，其余 1。 */
+    public int footprintH() {
+        return this == CHEST ? 2 : 1;
     }
 
     public int rgb() {

@@ -5,6 +5,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.files.FileHandle;
 import com.cavedream.core.net.CloudSaveClient;
+import com.cavedream.core.net.NpcDialogueProvider;
 import com.cavedream.core.net.ServerConfig;
 import com.cavedream.core.player.PlayerClass;
 import com.cavedream.core.render.ItemCatalog;
@@ -13,6 +14,7 @@ import com.cavedream.core.save.GameSave;
 import com.cavedream.core.screen.ClassScreen;
 import com.cavedream.core.screen.LoadingScreen;
 import com.cavedream.core.screen.PaintStudioScreen;
+import com.cavedream.core.screen.PlayScreen;
 import com.cavedream.core.screen.SaveListScreen;
 import com.cavedream.core.screen.SplashScreen;
 import com.cavedream.core.screen.TitleScreen;
@@ -31,6 +33,12 @@ public class CaveDreamGame extends Game {
     private String sessionNick;
     private volatile String lastCloudMsg;                                 // 上次云存档结果（主菜单回显）
     private final CloudSaveClient cloudSaves = new CloudSaveClient(ServerConfig.BASE_URL);
+    private final NpcDialogueProvider npcDialogue = new NpcDialogueProvider();   // NPC 对话（大模型，读环境变量 key）
+    private PlayScreen currentPlay;                                              // 活跃世界屏（供法典画板“重绘后返回”）
+
+    public NpcDialogueProvider npcDialogue() {
+        return npcDialogue;
+    }
 
     @Override
     public void create() {
@@ -80,6 +88,23 @@ public class CaveDreamGame extends Game {
         setScreen(new PaintStudioScreen(this, playerClass));
     }
 
+    /** 法典画板：以 initial 为起点打开重绘画板，完成回调 onDone 后返回世界。 */
+    public void openPaint(PaintedLook initial, String title, java.util.function.Consumer<PaintedLook> onDone) {
+        setScreen(new PaintStudioScreen(this, initial, title, onDone));
+    }
+
+    /** 重绘完成/放弃→切回之前的世界屏（PlayScreen 未 dispose，纹理/状态仍在）。 */
+    public void resumeFromPaint() {
+        if (currentPlay != null) {
+            setScreen(currentPlay);
+        }
+    }
+
+    /** PlayScreen 在 show 时登记自己为当前世界屏。 */
+    public void setCurrentPlay(PlayScreen ps) {
+        this.currentPlay = ps;
+    }
+
     /** 捏脸完成→生成加载屏（后台生成中世界，完成进 PlayScreen）；分配一个全新存档槽。 */
     public void startNewDream(PlayerClass playerClass, PaintedLook appearance) {
         setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance));
@@ -91,6 +116,7 @@ public class CaveDreamGame extends Game {
 
     /** 游玩中按 ESC：退回标题界面（世界不保留；下次“继续游戏”从存档文件读回）。 */
     public void backToTitle() {
+        currentPlay = null;
         setScreen(new TitleScreen(this));
     }
 
@@ -160,9 +186,11 @@ public class CaveDreamGame extends Game {
     public void setSession(String token, String nickname) {
         this.sessionToken = token;
         this.sessionNick = nickname;
+        String t = token == null ? "" : token;
+        String n = nickname == null ? "" : nickname;
         try {
             Gdx.files.external("cavedream/session.json")
-                    .writeString("{\"token\":\"" + token + "\",\"nickname\":\"" + nickname + "\"}", false);
+                    .writeString("{\"token\":\"" + t + "\",\"nickname\":\"" + n + "\"}", false);
         } catch (Exception ignore) {
             // 写会话失败不影响本地游戏
         }

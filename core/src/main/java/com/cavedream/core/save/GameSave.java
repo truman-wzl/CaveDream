@@ -30,9 +30,17 @@ public class GameSave {
     public int clockMinutes;                // 昼夜时刻（自 0:00 的分钟）
     public int coins;                       // 铸梦币
     public int servantCap;                  // 召唤师仆从上限（存上限不存当前数；重进存档需重新召唤）
+    public boolean codexOwned;              // 是否已向构梦者购得《世界准则法典》（一次性）
 
     public int faceTemplateId;              // 捏脸画板模板 id（0=梦之主）
     public int[] faceColors = new int[0];   // 玩家上色的外观（每格 ARGB，882 格）
+
+    public String[] storyLog = new String[0];  // 本存档的“剧情记忆”（大模型经历记忆库，随存档持久化）
+
+    public int[] chestTile = new int[0];       // 有记录的容器 tile 索引（任意存储摆件）
+    public int[] chestCap = new int[0];        // 对应容量（变长，按此累加偏移切分下面两数组）
+    public int[] chestItem = new int[0];       // 拼接：各容器逐格物品 id（-1 空）
+    public int[] chestCount = new int[0];      // 拼接：对应数量
 
     public String toJson() {
         Json json = new Json();

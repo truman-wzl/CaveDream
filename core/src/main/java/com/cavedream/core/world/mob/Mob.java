@@ -30,6 +30,7 @@ public abstract class Mob {
     private static final float IFRAME = 0.5f;                                 // 无敌帧时长（秒）
     protected int coinMin = 1;                                                // 死亡掉落铸梦币下限（子类按强度设定）
     protected int coinMax = 3;                                                // 上限
+    protected float gravityScale = 1f;                                        // 重力倍率（飞行怪设 0）
 
     protected Mob(float x, float y, float w, float h, int maxHp, int colorIndex) {
         this.x = x;
@@ -52,7 +53,7 @@ public abstract class Mob {
     }
 
     private void physics(LayerWorld world, float dt) {
-        vy = Math.max(vy - GRAVITY * dt, -MAX_FALL);
+        vy = Math.max(vy - GRAVITY * gravityScale * dt, -MAX_FALL);
         x += vx * dt;
         if (overlapsSolid(world)) {
             x -= vx * dt;
@@ -90,7 +91,7 @@ public abstract class Mob {
         int y1 = (int) Math.floor((y + h) / t);
         for (int tx = x0; tx <= x1; tx++) {
             for (int ty = y0; ty <= y1; ty++) {
-                if (world.isSolid(tx, ty)) {
+                if (world.blocksMob(tx, ty)) {   // 实体或门都挡怪（门关着时史莱姆不能穿）
                     return true;
                 }
             }
