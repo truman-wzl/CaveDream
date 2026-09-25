@@ -76,4 +76,35 @@ class LightEngineTest {
         // 块光格：与昼夜无关（午夜仍由矿石照亮）
         assertThat(e.staticLevel(3, 3, 0)).isEqualTo(e.staticLevel(3, 3, 15));
     }
+
+    /** 无背景墙→可透光；同格有背景墙→完全不透（天光进入即被拦，恒为 0）。 */
+    @Test
+    void wallStopsSkyTransmission() {
+        LayerWorld unwalled = ground();
+        unwalled.setBlock(8, 5, BlockType.AIR);        // 地下挖一个空格、无背景墙
+        LightEngine e = new LightEngine();
+        e.recompute(unwalled);
+        int openLight = e.skyAt(8, 5);
+
+        LayerWorld walled = ground();
+        walled.setBlock(8, 5, BlockType.AIR);
+        walled.setBackWall(8, 5, true);                // 同位铺背景墙
+        LightEngine e2 = new LightEngine();
+        e2.recompute(walled);
+        assertThat(e2.skyAt(8, 5)).as("有背景墙→不透光→黑").isZero();
+        assertThat(openLight).as("无墙同格有渗露天光").isGreaterThan(e2.skyAt(8, 5));
+    }
+
+    /** 浮岛（固体、无墙）不遮黑其下方开阔空：天光经侧向连通漫灌到满天光。 */
+    @Test
+    void underFloatingIslandStaysLitViaConnectivity() {
+        LayerWorld w = new LayerWorld(20, 16);         // 全空气
+        for (int x = 5; x < 15; x++) {
+            w.setBlock(x, 12, BlockType.STONE);        // 悬石条，左右各留开口（不横贯）
+        }
+        LightEngine e = new LightEngine();
+        e.recompute(w);
+        assertThat(e.skyAt(9, 11)).as("石条下方空气经侧向连通→满天光").isEqualTo(LightEngine.MAX_LEVEL);
+        assertThat(e.skyAt(9, 13)).as("石条上方开阔天空光").isEqualTo(LightEngine.MAX_LEVEL);
+    }
 }

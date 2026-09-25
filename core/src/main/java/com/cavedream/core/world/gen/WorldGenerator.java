@@ -198,20 +198,31 @@ public final class WorldGenerator {
             }
         }
 
-        // ---------- 7 天空带：浮岛群 + 主浮岛 ----------
+        // ---------- 7 天空带：先定主岛（出生/入梦锤），再在其外围撒浮岛群 ----------
+        int anchorX = (int) clamp(W / 2.0 + (rnd.nextDouble() * 0.3 - 0.15) * W, 120, W - 120);
+        int mainTopY = surfTop + (int) ((H - surfTop) * 0.45);
+        int mainRx = Math.max(60, W / 60);        // 主岛为中央出生/入梦岛，不随浮岛群放大
+        int mainRy = Math.max(10, H / 120);
+        carveIsland(w, anchorX, mainTopY, mainRx, mainRy, H);
+        // 浮岛群体量 ×3，但：①半径锁不超图宽/5（不横贯雾墙隔断连通）；②跳过水平投影压在/穿过主岛上空的（否则截断出生列天光→正午仍黑）
         int islandCount = Math.max(2, W / Math.max(1, L.islandDensity()));
         for (int i = 0; i < islandCount; i++) {
             int icx = 30 + rnd.nextInt(Math.max(1, W - 60));
             int icy = surfTop + 12 + rnd.nextInt(Math.max(1, H - surfTop - 34));
-            carveIsland(w, icx, icy, 15 + rnd.nextInt(35), 4 + rnd.nextInt(7), H);
+            int irx = Math.min(26 + rnd.nextInt(60), Math.max(20, W / 5));
+            int iry = Math.min(7 + rnd.nextInt(11), Math.max(8, H / 30));
+            if (Math.abs(icx - anchorX) <= mainRx + irx) {
+                continue;   // 与主岛列有水平重叠→不生成（保证出生天空不被遮）
+            }
+            carveIsland(w, icx, icy, irx, iry, H);
         }
-        int anchorX = (int) clamp(W / 2.0 + (rnd.nextDouble() * 0.3 - 0.15) * W, 120, W - 120);
-        int mainTopY = surfTop + (int) ((H - surfTop) * 0.45);
-        int mainRx = Math.max(60, W / 60);
-        carveIsland(w, anchorX, mainTopY, mainRx, Math.max(10, H / 120), H);
 
         // ---------- 7b 浮岛顶植树（天空岛不再光秃；跳过主浮岛=出生/入梦锤所在，不埋出生点） ----------
         plantIslandTrees(w, rnd, surfTop, H, anchorX - mainRx, anchorX + mainRx);
+
+        // ---------- 7c 天空岛石核布矿（host=STONE：天空带内仅岛体为石，天然只在岛内成矿） ----------
+        oreVeins(w, rnd, BlockType.IRON_ORE, BlockType.STONE, surfTop + 8, caveTop, 3000);
+        oreVeins(w, rnd, BlockType.GOLD_ORE, BlockType.STONE, surfTop + 8, caveTop, 6000);
 
         // ---------- 8 地狱带 Boss 竞技场 ----------
         int ax = W / 2;
@@ -268,7 +279,7 @@ public final class WorldGenerator {
         // ---------- 12 要素标记 ----------
         TilePos dreamLoom = surfaceMark(ground, inSea, (int) (W * 0.40), W);
         TilePos artisan = surfaceMark(ground, inSea, (int) (W * 0.45), W);
-        TilePos spawn = new TilePos(anchorX, mainTopY + Math.max(10, H / 120) + 2);
+        TilePos spawn = new TilePos(anchorX, mainTopY + mainRy + 2);
         TilePos dreamEntry = new TilePos(anchorX, mainTopY + 1);
         TilePos bedSite = new TilePos(anchorX + 24, mainTopY + 1);
 
@@ -297,6 +308,15 @@ public final class WorldGenerator {
             gathering.add(surfaceMark(ground, inSea, 6 + rnd.nextInt(W - 12), W));
         }
         TilePos vessel = chests.size() > 2 ? chests.get(chests.size() / 2) : new TilePos(ax, caveTop - 4);
+
+        // ---------- 12b 地下铺自然背景墙（泰拉瑞亚式透光）：地表(ground)以下各格背后置墙 → 洞穴天然黑暗、
+        //              挖开仍留墙需火把；天空带/浮岛在地表以上 → 不置墙 → 天光连通漫灌，地标不被头顶浮岛遮黑。 ----------
+        for (int x = 0; x < W; x++) {
+            int surf = ground[x];
+            for (int y = 0; y < surf; y++) {
+                w.setBackWall(x, y, true);
+            }
+        }
 
         // ---------- 13 连通性：主脉即开口竖井（地面层一并挖开，入曰可进），结构上保证地表→地狱贯通；
         // reachable() 保留给单测做硬校验 ----------
@@ -344,7 +364,16 @@ public final class WorldGenerator {
                 if (nx <= 2 || nx >= w.getWidth() - 3 || ny <= 3 || ny >= H - 3) {
                     continue;
                 }
-                BlockType b = dy < -ry * 0.55 ? BlockType.GRASS : dy < 0 ? BlockType.DIRT : BlockType.CLOUD;
+                BlockType b;
+                if (dy < -ry * 0.55) {
+                    b = BlockType.GRASS;             // 表层草（可长树）
+                } else if (dy < 0) {
+                    b = BlockType.DIRT;              // 浅土层
+                } else if (dy < ry * 0.5) {
+                    b = BlockType.STONE;             // 石核：可挖掘、容矿脉
+                } else {
+                    b = BlockType.CLOUD;             // 岛底云絮
+                }
                 w.setBlock(nx, ny, b);
             }
         }

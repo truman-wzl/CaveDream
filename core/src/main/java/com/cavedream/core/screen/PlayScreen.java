@@ -281,6 +281,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                     keyDown(Input.Keys.A) || keyDown(Input.Keys.LEFT),
                     keyDown(Input.Keys.D) || keyDown(Input.Keys.RIGHT),
                     keyDown(Input.Keys.W) || keyDown(Input.Keys.SPACE) || keyDown(Input.Keys.UP),
+                    keyDown(Input.Keys.S) || keyDown(Input.Keys.DOWN),
                     delta);
             if (player.isMoving() && player.isOnGround()) {
                 walkPhase += delta * 11f;
@@ -1640,7 +1641,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         return a > 0.9f ? 0.9f : a;             // 最暗也留 10% 可见
     }
 
-    /** 连续亮度 0~1（double/float）：天光×昼光因子、块光、动态光取最大（不再用太阳直射角投影）。 */
+    /** 连续亮度 0~1（double/float）：天光（非背景墙连通透光的强度，已由 LightEngine 按昼强缩放前的几何值）与块光、动态光取最大。 */
     private float lightLevelFloat(int x, int y) {
         float sky = lightEngine.skyAt(x, y) / (float) LightEngine.MAX_LEVEL * (float) daylight;
         float lvl = Math.max(sky, lightEngine.blockAt(x, y) / (float) LightEngine.MAX_LEVEL);
@@ -1675,15 +1676,22 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         float h = player.height();
         int facing = player.facing();
         boolean walking = player.isMoving() && player.isOnGround();
-        // 走路：上下颠 + 左右轻摆（非纸片平移）；空中：前倾
-        float bob = walking ? (float) Math.abs(Math.sin(walkPhase)) * 2.2f : 0f;
+        boolean swimming = player.isInWater();
+        // 走路：上下颠 + 左右轻摆；空中：前倾；游泳：身体横卧 + 随波浮动
+        float bob;
         float tilt;
-        if (walking) {
-            tilt = (float) Math.sin(walkPhase) * 3f;
-        } else if (!player.isOnGround()) {
-            tilt = facing > 0 ? 6f : -6f;
+        if (swimming) {
+            bob = (float) Math.sin(time * 4f) * 1.8f;
+            tilt = facing > 0 ? 80f : -80f;
         } else {
-            tilt = 0f;
+            bob = walking ? (float) Math.abs(Math.sin(walkPhase)) * 2.2f : 0f;
+            if (walking) {
+                tilt = (float) Math.sin(walkPhase) * 3f;
+            } else if (!player.isOnGround()) {
+                tilt = facing > 0 ? 6f : -6f;
+            } else {
+                tilt = 0f;
+            }
         }
         // 手持物：按类型定尺寸与握姿（武器大、工具中、方块为小立方抱于胸前），配合走路持手轻晃与挥砍弧
         Item held = inventory.selectedItem();

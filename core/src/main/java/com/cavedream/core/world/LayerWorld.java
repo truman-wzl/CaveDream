@@ -10,6 +10,7 @@ public final class LayerWorld {
     private final int height;
     private final short[] tiles;
     private final short[] mounts;   // 墙面对象第二层（火把等），0=无
+    private final short[] back;     // 背景墙层（泰拉瑞亚式）：非0=该格背后有墙→阻挡天光；由种子确定性生成（地下），不入存档
 
     private int spawnTileX;
     private int spawnTileY;   // 出生点 = 玩家脚所站的空气格（其下方一格为实心）
@@ -22,6 +23,7 @@ public final class LayerWorld {
         this.height = height;
         this.tiles = new short[width * height];   // 默认全 AIR
         this.mounts = new short[width * height];   // 默认无墙面对象
+        this.back = new short[width * height];     // 默认无背景墙
     }
 
     public boolean inBounds(int x, int y) {
@@ -52,6 +54,11 @@ public final class LayerWorld {
         return inBounds(x, y) && blockAt(x, y).platform();
     }
 
+    /** 该格是否液体（梦水）；越界=false。 */
+    public boolean isWater(int x, int y) {
+        return inBounds(x, y) && blockAt(x, y).liquid();
+    }
+
     /** 该格是否阻挡敌怪（实体或门）；越界=true（雾墙安全网）。 */
     public boolean blocksMob(int x, int y) {
         return !inBounds(x, y) || blockAt(x, y).blocksMobs();
@@ -68,6 +75,21 @@ public final class LayerWorld {
     public void setMount(int x, int y, BlockType type) {
         if (inBounds(x, y)) {
             mounts[y * width + x] = type.id();
+        }
+    }
+
+    /** 该格背后是否有背景墙（阻挡天光）：自然墙（back 层）或已放置的背景墙方块（WOOD_WALL）；越界=有（雾墙封挡）。 */
+    public boolean hasWall(int x, int y) {
+        if (!inBounds(x, y)) {
+            return true;
+        }
+        return back[y * width + x] != 0 || blockAt(x, y).backgroundWall();
+    }
+
+    /** 铺设/清除自然背景墙（生成期用；非0=有墙）。 */
+    public void setBackWall(int x, int y, boolean wall) {
+        if (inBounds(x, y)) {
+            back[y * width + x] = (short) (wall ? 1 : 0);
         }
     }
 

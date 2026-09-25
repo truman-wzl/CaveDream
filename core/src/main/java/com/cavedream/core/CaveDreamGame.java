@@ -28,7 +28,7 @@ public class CaveDreamGame extends Game {
     private boolean fullscreen = false;   // 默认窗口化启动（与 Main 一致）；F11 首次按下切全屏
 
     /** 云存档：会话 token（登录写入 session.json、重启自动读回）+ 版本 + 客户端。 */
-    public static final String GAME_VERSION = "0.51";
+    public static final String GAME_VERSION = "0.52";
     private String sessionToken;
     private String sessionNick;
     private volatile String lastCloudMsg;                                 // 上次云存档结果（主菜单回显）

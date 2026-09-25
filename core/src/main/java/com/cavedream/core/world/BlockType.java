@@ -107,6 +107,11 @@ public enum BlockType {
         return this == WOOD_WALL;
     }
 
+    /** 液体（梦水）：非实体、可行入；玩家受阻力/浮力，可自由游泳不溺水（梦境设定）。 */
+    public boolean liquid() {
+        return this == WATER;
+    }
+
     /** 可作为“墙面对象”挂到背景墙/实心墙上的非实体装饰（当前：火把）。 */
     public boolean wallMountable() {
         return this == TORCH;

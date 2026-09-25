@@ -10,7 +10,7 @@ import com.cavedream.core.render.PaintedLook;
 public final class GuideNpc {
 
     public static final int SPAWN_COINS = 10;      // 铸梦币达此值→出现
-    public static final int CODEX_PRICE = 50;      // 世界准则法典售价
+    public static final int CODEX_PRICE = 5;       // 世界准则法典售价（⚠ 临时调低便于测试，正式版应改回 50）
     public static final int TEMPLATE_ID = 1;       // 构梦者画板模板 id
 
     private float x;
