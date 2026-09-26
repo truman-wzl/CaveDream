@@ -1,11 +1,10 @@
 package com.cavedream.core.render;
 
-import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.graphics.GL20;
-import com.badlogic.gdx.graphics.Mesh;
-import com.badlogic.gdx.graphics.OrthographicCamera;
-import com.badlogic.gdx.graphics.VertexAttribute;
-import com.badlogic.gdx.graphics.glutils.ShaderProgram;
+import com.badlogic.gdx.graphics.Pixmap;
+import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.Texture.TextureFilter;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.utils.Disposable;
 import com.cavedream.core.anim.BoneId;
 import com.cavedream.core.anim.Pose;
@@ -15,41 +14,30 @@ import com.cavedream.core.anim.rig.DreamerRig;
 import com.cavedream.core.anim.rig.SkinBinding;
 
 /**
- * 骨骼蒙皮角色渲染器：CPU 端线性混合蒙皮（每不透明像素一个四边形 4 角，按 {@code world*invBind} 变形、双骨权重混合），
- * 产出 {@link Mesh}(position2+color4)，用自带极简 shader 在相机投影下绘制。与 SpriteBatch 独立（须在批处理外调用 {@link #draw}）。
- * 通用件：换 {@link SkinBinding}/像素来源即可为物品/怪物蒙皮（"万物皆可骨骼化"地基）。
+ * 骨骼蒙皮角色渲染器（软件蒙皮版）：每帧把 21×42 的 {@link PaintedLook} 像素按骨骼世界矩阵
+ * （{@code world*invBind} 双骨线性混合）重画进一张较大的画布纹理，再走标准 {@link SpriteBatch} 绘制。
+ * 用与方块/武器完全相同的渲染通道 → 无自定义 shader/Mesh 的 GL 状态风险，必定可见、可跟随。
+ * 通用件：换 {@link SkinBinding}/像素来源即可为 NPC/怪物蒙皮。
  */
 public final class SkeletalAvatar implements Disposable {
 
-    private static final String VS =
-            "attribute vec3 a_position; attribute vec4 a_color; uniform mat4 u_proj;\n"
-                    + "varying vec4 v_color;\n"
-                    + "void main(){ v_color=a_color; gl_Position = u_proj * vec4(a_position, 1.0); }";
-    private static final String FS =
-            "varying vec4 v_color;\n void main(){ gl_FragColor = v_color; }";
-
-    private static final int FLOATS_PER_VERT = 7;   // x,y,z + r,g,b,a
+    private static final int CW = 52, CH = 76;   // 画布（比人形 32×64 大一圈，容纳肢体摆动）
+    private int sprW = DreamerRig.W, sprH = DreamerRig.H;   // 当前皮肤的像素尺寸（随外观设定）
 
     private final Skeleton skeleton;
     private final Transform2[] invBind = new Transform2[BoneId.COUNT];
     private final Transform2[] skin = new Transform2[BoneId.COUNT];
     private final float[] tmp = new float[2];
 
-    private SkinBinding binding;
     private int[] colors;
     private int[] px, py, pcol;
     private byte[] pba, pbb;
     private float[] pwa;
     private int nPix;
 
-    private Mesh mesh;
-    private final ShaderProgram shader;
-    private float[] verts;
-
-    // draw 期缓存，供 corner() 读
-    private float scaleX, scaleY, cx, cy, cosR, sinR;
-    private int facingNow;
-    private float AX, AY;
+    private final Pixmap canvas;
+    private final Texture tex;
+    private final TextureRegion region;
 
     public SkeletalAvatar() {
         this.skeleton = DreamerRig.newSkeleton();
@@ -58,17 +46,20 @@ public final class SkeletalAvatar implements Disposable {
             invBind[i] = skeleton.world(BoneId.values()[i]).inverted();
             skin[i] = new Transform2();
         }
-        shader = new ShaderProgram(VS, FS);
-        if (!shader.isCompiled()) {
-            Gdx.app.error("SkeletalAvatar", shader.getLog());
-        }
+        canvas = new Pixmap(CW, CH, Pixmap.Format.RGBA8888);
+        canvas.setBlending(Pixmap.Blending.None);
+        tex = new Texture(canvas);
+        tex.setFilter(TextureFilter.Nearest, TextureFilter.Nearest);
+        region = new TextureRegion(tex);
     }
 
-    /** 外观改变时重建像素与蒙皮（绑定依模板 region；颜色取当前上色）。 */
+    /** 外观改变时重建像素（颜色取当前上色，绑定依模板 region）。 */
     public void setAppearance(PaintedLook look) {
         this.colors = look.colors;
-        this.binding = DreamerRig.bind(look);
-        int cap = DreamerRig.W * DreamerRig.H;
+        SkinBinding binding = DreamerRig.bind(look);
+        this.sprW = binding.w;
+        this.sprH = binding.h;
+        int cap = binding.w * binding.h;
         px = new int[cap];
         py = new int[cap];
         pcol = new int[cap];
@@ -76,9 +67,9 @@ public final class SkeletalAvatar implements Disposable {
         pbb = new byte[cap];
         pwa = new float[cap];
         int n = 0;
-        for (int y = 0; y < DreamerRig.H; y++) {
-            for (int x = 0; x < DreamerRig.W; x++) {
-                int i = y * DreamerRig.W + x;
+        for (int y = 0; y < binding.h; y++) {
+            for (int x = 0; x < binding.w; x++) {
+                int i = y * binding.w + x;
                 if (i >= colors.length || !binding.bound[i] || (colors[i] & 0xFFFFFF) == 0) {
                     continue;
                 }
@@ -92,13 +83,6 @@ public final class SkeletalAvatar implements Disposable {
             }
         }
         nPix = n;
-        if (mesh != null) {
-            mesh.dispose();
-        }
-        verts = new float[Math.max(6, nPix) * 6 * FLOATS_PER_VERT];
-        mesh = new Mesh(true, nPix * 6, 0,
-                VertexAttribute.Position(),
-                VertexAttribute.ColorUnpacked());
     }
 
     /** 由姿态算各骨蒙皮矩阵 {@code world*invBind}。 */
@@ -111,84 +95,79 @@ public final class SkeletalAvatar implements Disposable {
     }
 
     /**
-     * 在世界批处理之外绘制蒙皮角色。
+     * 某骨枢点在世界的坐标与角度（与 {@link #draw} 同一映射），供武器 socket 对接。需先 {@link #applyPose}。
+     * 角度为 batch-rot 约定（视觉顺时针、未镜像累计）：poseRot 正角经蒙皮 y-down→世界 y-up 翻转后
+     * 恰为视觉顺时针；atan2(b,a) 是像素系 CCW，取负还原 CW。不含 tilt/facing——由调用端统一乘 facing 补偿镜像。
+     * @return {worldX, worldY, batchRotDeg}
+     */
+    public float[] boneWorld(BoneId bone, float footX, float footY, float w, float h, int facing, float tiltDeg) {
+        Transform2 m = skeleton.world(bone);
+        float s = w / sprW;
+        float lx = (m.e - sprW / 2f) * s * facing;
+        float ly = -(m.f - sprH / 2f) * s;
+        double r = Math.toRadians(tiltDeg);
+        float wx = (float) (lx * Math.cos(r) - ly * Math.sin(r));
+        float wy = (float) (lx * Math.sin(r) + ly * Math.cos(r));
+        float ang = -(float) Math.toDegrees(Math.atan2(m.b, m.a));
+        return new float[]{footX + w / 2f + wx, footY + h / 2f + wy, ang};
+    }
+
+    /**
+     * 软件蒙皮重绘 + 用给定 SpriteBatch（须已设相机投影、处于 begin 状态）绘制。
      * @param footX,footY 角色左下角世界像素（含 bob）；w,h 目标世界尺寸；facing ±1；tiltDeg 倾角
      */
-    public void draw(OrthographicCamera cam, float footX, float footY, float w, float h, int facing, float tiltDeg) {
-        if (mesh == null || nPix == 0 || !shader.isCompiled()) {
+    public void draw(SpriteBatch batch, float footX, float footY, float w, float h, int facing, float tiltDeg) {
+        if (nPix == 0) {
             return;
         }
-        scaleX = w / DreamerRig.W;
-        scaleY = h / DreamerRig.H;
-        cx = footX + w / 2f;
-        cy = footY + h / 2f;
-        facingNow = facing;
-        double r = Math.toRadians(tiltDeg);
-        cosR = (float) Math.cos(r);
-        sinR = (float) Math.sin(r);
-
-        int v = 0;
+        canvas.setColor(0, 0, 0, 0);
+        canvas.fill();
         for (int p = 0; p < nPix; p++) {
-            int x = px[p], y = py[p];
-            int c = pcol[p];
-            float cr = ((c >> 16) & 0xFF) / 255f, cg = ((c >> 8) & 0xFF) / 255f, cb = (c & 0xFF) / 255f;
-            float wa = pwa[p], wb = 1f - wa;
             Transform2 ma = skin[pba[p] & 0xFF], mb = skin[pbb[p] & 0xFF];
-            corner(x, y, ma, mb, wa, wb);
-            float c0x = AX, c0y = AY;
-            corner(x + 1f, y, ma, mb, wa, wb);
-            float c1x = AX, c1y = AY;
-            corner(x + 1f, y + 1f, ma, mb, wa, wb);
-            float c2x = AX, c2y = AY;
-            corner(x, y + 1f, ma, mb, wa, wb);
-            float c3x = AX, c3y = AY;
-            v = emit(v, c0x, c0y, cr, cg, cb);
-            v = emit(v, c1x, c1y, cr, cg, cb);
-            v = emit(v, c2x, c2y, cr, cg, cb);
-            v = emit(v, c0x, c0y, cr, cg, cb);
-            v = emit(v, c2x, c2y, cr, cg, cb);
-            v = emit(v, c3x, c3y, cr, cg, cb);
+            float wa = pwa[p], wb = 1f - wa;
+            float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+            for (int k = 0; k < 4; k++) {                 // 变形的四角→包围盒，逐格填充（无空洞、不闪烁）
+                float sx = px[p] + ((k & 1) == 0 ? 0f : 1f);
+                float sy = py[p] + ((k & 2) == 0 ? 0f : 1f);
+                ma.apply(sx, sy, tmp);
+                float qx = tmp[0], qy = tmp[1];
+                if (wb > 0f) {
+                    mb.apply(sx, sy, tmp);
+                    qx = qx * wa + tmp[0] * wb;
+                    qy = qy * wa + tmp[1] * wb;
+                }
+                float ux = qx - sprW / 2f + CW / 2f;
+                float uy = qy - sprH / 2f + CH / 2f;
+                if (ux < minx) minx = ux;
+                if (ux > maxx) maxx = ux;
+                if (uy < miny) miny = uy;
+                if (uy > maxy) maxy = uy;
+            }
+            int c0 = Math.max(0, (int) Math.floor(minx)), c1 = Math.min(CW - 1, (int) Math.ceil(maxx));
+            int r0 = Math.max(0, (int) Math.floor(miny)), r1 = Math.min(CH - 1, (int) Math.ceil(maxy));
+            if (c0 > c1 || r0 > r1) {
+                continue;
+            }
+            int c = pcol[p];
+            canvas.setColor(((c >> 16) & 0xFF) / 255f, ((c >> 8) & 0xFF) / 255f, (c & 0xFF) / 255f, 1f);
+            for (int yy = r0; yy <= r1; yy++) {
+                for (int xx = c0; xx <= c1; xx++) {
+                    canvas.drawPixel(xx, yy);
+                }
+            }
         }
-        mesh.setVertices(verts, 0, v);
-        shader.bind();
-        shader.setUniformMatrix("u_proj", cam.combined);
-        Gdx.gl.glEnable(GL20.GL_BLEND);
-        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
-        mesh.bind(shader);
-        Gdx.gl.glDrawArrays(GL20.GL_TRIANGLES, 0, v / FLOATS_PER_VERT);
-    }
+        tex.draw(canvas, 0, 0);
 
-    /** 一个像素角：像素(y-down)经双骨蒙皮变形后映射到世界（居中/镜像/旋转/平移）。结果写入 AX,AY。 */
-    private void corner(float dx, float dy, Transform2 ma, Transform2 mb, float wa, float wb) {
-        ma.apply(dx, dy, tmp);
-        float qx = tmp[0], qy = tmp[1];
-        if (wb > 0f) {
-            mb.apply(dx, dy, tmp);
-            qx = qx * wa + tmp[0] * wb;
-            qy = qy * wa + tmp[1] * wb;
-        }
-        float u = (qx - DreamerRig.W / 2f) * scaleX * facingNow;
-        float vUp = (DreamerRig.H / 2f - qy) * scaleY;
-        AX = cx + (u * cosR - vUp * sinR);
-        AY = cy + (u * sinR + vUp * cosR);
-    }
-
-    private int emit(int v, float x, float y, float r, float g, float b) {
-        verts[v] = x;
-        verts[v + 1] = y;
-        verts[v + 2] = 0f;
-        verts[v + 3] = r;
-        verts[v + 4] = g;
-        verts[v + 5] = b;
-        verts[v + 6] = 1f;
-        return v + FLOATS_PER_VERT;
+        float s = w / sprW;                      // 世界像素 / 精灵像素
+        float cw = CW * s, ch = CH * s;
+        float centerX = footX + w / 2f, centerY = footY + h / 2f;
+        batch.setColor(1, 1, 1, 1);   // 关键：重置 batch 色，避免被先前绘制的木质面板等 tint 成棕色
+        batch.draw(region, centerX - cw / 2f, centerY - ch / 2f, cw / 2f, ch / 2f, cw, ch, facing, 1f, tiltDeg);
     }
 
     @Override
     public void dispose() {
-        if (mesh != null) {
-            mesh.dispose();
-        }
-        shader.dispose();
+        canvas.dispose();
+        tex.dispose();
     }
 }

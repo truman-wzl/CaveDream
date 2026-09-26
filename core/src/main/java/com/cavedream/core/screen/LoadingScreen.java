@@ -13,6 +13,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.utils.Disposable;
 import com.cavedream.core.CaveDreamGame;
 import com.cavedream.core.player.PlayerClass;
+import com.cavedream.core.appearance.LookSpec;
 import com.cavedream.core.render.PaintedLook;
 import com.cavedream.core.render.WoodUi;
 import com.cavedream.core.save.GameSave;
@@ -43,6 +44,7 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
     private final GameSave save;          // 可空（新游戏）；继续游戏时携带
     private final String slot;            // 存档槽位（新游戏分配的新档名 / 继续时为原档名）
     private final PaintedLook appearance; // 捏脸上色外观（新游戏来自画板；继续时由 applySave 覆盖）
+    private final LookSpec spec;          // 玩家外观蓝图（新游戏由骰子屏传入；继续时可空，applySave 从档读回）
     private final String saveName;        // 新游戏存档显示名（创建时命名）
 
     private final OrthographicCamera cam = new OrthographicCamera();
@@ -61,13 +63,14 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
     private int flavorIdx;
 
     public LoadingScreen(CaveDreamGame game, PlayerClass playerClass, long seed, GameSave save, String slot,
-                         PaintedLook appearance, String saveName) {
+                         PaintedLook appearance, String saveName, LookSpec spec) {
         this.game = game;
         this.playerClass = playerClass;
         this.seed = seed;
         this.save = save;
         this.slot = slot;
         this.appearance = appearance != null ? appearance : new PaintedLook();
+        this.spec = spec;
         this.saveName = saveName == null ? "" : saveName;
         batch = new SpriteBatch();
         Pixmap pm = new Pixmap(1, 1, Pixmap.Format.RGB888);
@@ -152,6 +155,9 @@ public class LoadingScreen extends ScreenAdapter implements Disposable {
 
     private void enterWorld(GeneratedWorld gw) {
         PlayScreen ps = new PlayScreen(game, playerClass, gw.world(), seed, gw.spawn().x(), gw.spawn().y(), appearance);
+        if (spec != null) {
+            ps.setSpec(spec);          // 新游戏：携带骰子蓝图供存档复现
+        }
         if (save != null) {
             ps.applySave(save);        // 沿用原档槽位
         } else {

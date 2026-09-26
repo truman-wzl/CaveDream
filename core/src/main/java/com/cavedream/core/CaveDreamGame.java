@@ -10,9 +10,12 @@ import com.cavedream.core.net.ServerConfig;
 import com.cavedream.core.player.PlayerClass;
 import com.cavedream.core.render.ItemCatalog;
 import com.cavedream.core.render.PaintedLook;
+import com.cavedream.core.appearance.LookSpec;
+import com.cavedream.core.appearance.PixelLookForge;
 import com.cavedream.core.save.GameSave;
 import com.cavedream.core.screen.ClassScreen;
 import com.cavedream.core.screen.LoadingScreen;
+import com.cavedream.core.screen.LookStudioScreen;
 import com.cavedream.core.screen.PaintStudioScreen;
 import com.cavedream.core.screen.PlayScreen;
 import com.cavedream.core.screen.SaveListScreen;
@@ -83,11 +86,11 @@ public class CaveDreamGame extends Game {
         setScreen(new ClassScreen(this));
     }
 
-    /** 选定职业后→先命名存档（创建时命名）→再进捏脸画板。 */
+    /** 选定职业后→先命名存档（创建时命名）→再进外观骰子屏。 */
     public void nameNewDream(PlayerClass playerClass) {
         setScreen(new com.cavedream.core.screen.NameInputScreen(this, "为你的梦命名",
                 playerClass.cn() + "之梦",
-                name -> setScreen(new PaintStudioScreen(this, playerClass, name)),
+                name -> setScreen(new LookStudioScreen(this, playerClass, name)),
                 this::showTitle));
     }
 
@@ -108,9 +111,15 @@ public class CaveDreamGame extends Game {
         this.currentPlay = ps;
     }
 
-    /** 捏脸完成→生成加载屏（后台生成中世界，完成进 PlayScreen）；分配一个全新存档槽。 */
+    /** 旧建号入口（手涂外观）：已由骰子屏取代，保留供 PaintStudioScreen 回退。 */
     public void startNewDream(PlayerClass playerClass, String name, PaintedLook appearance) {
-        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance, name));
+        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance, name, null));
+    }
+
+    /** 外观骰子确认→锻造像素→生成加载屏；分配全新存档槽，并携带蓝图供存档复现。 */
+    public void startNewDream(PlayerClass playerClass, String name, LookSpec spec) {
+        PaintedLook appearance = PixelLookForge.forge(spec);
+        setScreen(new LoadingScreen(this, playerClass, freshSeed(), null, freshSlot(), appearance, name, spec));
     }
 
     /** 存档列表改名：写显示名→落本地→同步云端（slot 不变、仅 save_name 变）→回列表。 */
@@ -320,6 +329,6 @@ public class CaveDreamGame extends Game {
         if (save.faceColors != null && save.faceColors.length == PaintedLook.W * PaintedLook.H) {
             look = new PaintedLook(save.faceTemplateId, save.faceColors);
         }
-        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot, look, save.saveName));
+        setScreen(new LoadingScreen(this, pc, save.seed, save, save.slot, look, save.saveName, null));
     }
 }

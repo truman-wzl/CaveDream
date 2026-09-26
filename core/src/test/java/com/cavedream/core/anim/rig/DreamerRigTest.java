@@ -2,14 +2,19 @@ package com.cavedream.core.anim.rig;
 
 import com.cavedream.core.anim.BoneId;
 import com.cavedream.core.anim.Skeleton;
+import com.cavedream.core.appearance.PixelLookForge;
 import com.cavedream.core.render.PaintedLook;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/** 梦之主骨架与自动蒙皮（纯逻辑）：bind 世界=枢轴、层级合法、逐格权重归一、就近主骨正确。 */
+/** 人形骨架与自动蒙皮（纯逻辑）：bind 世界=枢轴、层级合法、逐格权重归一、就近主骨正确。 */
 class DreamerRigTest {
+
+    private static PaintedLook look() {
+        return PixelLookForge.defaultLook();
+    }
 
     @Test
     void bindWorldEqualsPivots() {
@@ -39,8 +44,7 @@ class DreamerRigTest {
 
     @Test
     void bindInvariants() {
-        byte[] regions = PaintedLook.regions(0);   // 默认梦之主部位遮罩
-        SkinBinding sb = DreamerRig.bind(new PaintedLook(0));
+        SkinBinding sb = DreamerRig.bind(look());
         assertThat(sb.boundCount()).as("应有大量像素被绑定").isGreaterThan(150);
         for (int i = 0; i < sb.bound.length; i++) {
             if (!sb.bound[i]) {
@@ -55,15 +59,14 @@ class DreamerRigTest {
 
     @Test
     void scalpBindsToHeadAndFootToFrontFoot() {
-        byte[] regions = PaintedLook.regions(0);
-        SkinBinding sb = DreamerRig.bind(new PaintedLook(0));
-        int scalp = 6 * DreamerRig.W + 10;            // 头顶中央（y=6 在头圆内）
-        assertThat(sb.bound[scalp]).isTrue();
+        SkinBinding sb = DreamerRig.bind(look());
+        int scalp = (int) (0.10 * DreamerRig.H) * DreamerRig.W + DreamerRig.W / 2;   // 头顶中央
+        assertThat(sb.bound[scalp]).as("头顶应被绑定").isTrue();
         assertThat(sb.boneA(scalp)).isEqualTo(BoneId.HEAD);
         assertThat(sb.wA[scalp]).isGreaterThan(0.5f);
 
-        int toe = 39 * DreamerRig.W + 11;             // 前脚（x=11≥8.5, y=39）
-        assertThat(sb.bound[toe]).isTrue();
+        int toe = (int) (0.93 * DreamerRig.H) * DreamerRig.W + (int) (0.55 * DreamerRig.W);   // 前脚
+        assertThat(sb.bound[toe]).as("前脚应被绑定").isTrue();
         assertThat(sb.boneA(toe)).isEqualTo(BoneId.FOOT_F);
     }
 }

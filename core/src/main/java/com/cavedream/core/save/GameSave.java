@@ -34,8 +34,10 @@ public class GameSave {
     public boolean codexOwned;              // 是否已向构梦者购得《世界准则法典》（一次性）
     public boolean guidePresent;            // 构梦者是否已现身（一旦现身就常驻，不因铸梦币下降而消失）
 
-    public int faceTemplateId;              // 捏脸画板模板 id（0=梦之主）
-    public int[] faceColors = new int[0];   // 玩家上色的外观（每格 ARGB，882 格）
+    public int faceTemplateId;              // 捏脸画板模板 id（0=梦之主；旧档兼容）
+    public int[] faceColors = new int[0];   // 玩家外观像素（每格 ARGB；新档为锻造产物，旧档为手涂）
+    public int[] faceSpecParams = new int[0];   // 外观蓝图扁平参数（PixelLookForge 输入，可复现/重掷）
+    public int faceSpecVersion;                // 蓝图格式版本（0=无蓝图，回退 faceColors）
 
     public String[] storyLog = new String[0];  // 本存档的“剧情记忆”（大模型经历记忆库，随存档持久化）
 

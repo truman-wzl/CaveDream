@@ -1,5 +1,7 @@
 package com.cavedream.core.render;
 
+import com.cavedream.core.appearance.Humanoid;
+
 /**
  * 可涂色外观（“一切皆 ID”）= 模板 id + 每格 ARGB 颜色数组（纯数据，可存档/传云/入库当玩家创作）。
  * 画布初始化为全黑、上覆一个默认朝右的人；<b>纯黑 = 透明键</b>——只有非黑像素构成实体
@@ -8,7 +10,7 @@ package com.cavedream.core.render;
  */
 public final class PaintedLook {
 
-    public static final int W = 21, H = 42;
+    public static final int W = Humanoid.W, H = Humanoid.H;
     public static final int KEY = 0xFF000000;   // 纯黑 = 透明键（涂黑即擦除）
 
     public static final byte R_OUT = 0, R_HAIR = 1, R_SKIN = 2, R_EYE = 3, R_BLUSH = 4,
@@ -23,6 +25,7 @@ public final class PaintedLook {
 
     private int[] initial;                 // 重置用的起始像素
     private byte[] regionCache;
+    private byte[] customRegions;          // 锻造器产出的逐格部位（非空则优先于模板遮罩）
 
     public PaintedLook() {
         this(0);
@@ -33,7 +36,8 @@ public final class PaintedLook {
         this.w = W;
         this.h = H;
         this.templateId = templateId;
-        this.colors = defaultColors(templateId);
+        this.colors = new int[W * H];              // 空白画布（全黑=透明键；默认长相由 PixelLookForge 锻造注入）
+        java.util.Arrays.fill(this.colors, KEY);
         this.initial = this.colors.clone();
     }
 
@@ -42,8 +46,12 @@ public final class PaintedLook {
         this.w = W;
         this.h = H;
         this.templateId = templateId;
-        this.colors = colors.clone();
-        this.initial = defaultColors(templateId);
+        this.colors = new int[W * H];
+        java.util.Arrays.fill(this.colors, KEY);
+        if (colors != null) {
+            System.arraycopy(colors, 0, this.colors, 0, Math.min(colors.length, this.colors.length));
+        }
+        this.initial = this.colors.clone();
     }
 
     private PaintedLook(int w, int h, int[] argbColors) {
@@ -65,6 +73,13 @@ public final class PaintedLook {
         return new PaintedLook(w, h, colors);
     }
 
+    /** 由锻造器产出（人形：实例尺寸 + 逐格部位）构造；regions 与 colors 同长。 */
+    public static PaintedLook forHumanoid(int templateId, int w, int h, int[] colors, byte[] regions) {
+        PaintedLook l = new PaintedLook(templateId, colors);
+        l.customRegions = regions;
+        return l;
+    }
+
     /** 模板默认外观：全黑画布 + 默认朝右的人（体外填黑=透明键）。 */
     public static int[] defaultColors(int templateId) {
         int[] base = BlockTextures.defaultDreamerArgb();   // 体外 alpha=0
@@ -82,11 +97,20 @@ public final class PaintedLook {
     }
 
     public byte[] regions() {
+        if (customRegions != null) {
+            return customRegions;   // 锻造器产出的逐格部位（与 colors 同尺寸）
+        }
         if (item) {
             return new byte[colors.length];   // 物品无部位划分（仅画笔/橡皮有意义）
         }
         if (regionCache == null) {
-            regionCache = regions(templateId);
+            byte[] base = regions(templateId);
+            if (base.length == colors.length) {
+                regionCache = base;
+            } else {                            // 旧模板遮罩尺寸与画布不一致→零拷贝对齐
+                regionCache = new byte[colors.length];
+                System.arraycopy(base, 0, regionCache, 0, Math.min(base.length, regionCache.length));
+            }
         }
         return regionCache;
     }
@@ -95,7 +119,9 @@ public final class PaintedLook {
         if (item) {
             return new PaintedLook(w, h, colors.clone());
         }
-        return new PaintedLook(templateId, colors);
+        PaintedLook l = new PaintedLook(templateId, colors);
+        l.customRegions = customRegions == null ? null : customRegions.clone();
+        return l;
     }
 
     public boolean inBounds(int x, int y) {
@@ -109,15 +135,17 @@ public final class PaintedLook {
 
     /** 画笔：整幅画布任意格都可上色（含把体外涂黑来造型）；颜色吸附到调色板，纯黑即擦除。 */
     public void paint(int x, int y, int argb) {
-        if (inBounds(x, y)) {
-            colors[y * w + x] = Palette.snap(argb);
+        int i = y * w + x;
+        if (inBounds(x, y) && i < colors.length) {
+            colors[i] = Palette.snap(argb);
         }
     }
 
     /** 橡皮：擦成透明键（黑）。 */
     public void erase(int x, int y) {
-        if (inBounds(x, y)) {
-            colors[y * w + x] = KEY;
+        int i = y * w + x;
+        if (inBounds(x, y) && i < colors.length) {
+            colors[i] = KEY;
         }
     }
 

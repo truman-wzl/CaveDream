@@ -1,5 +1,6 @@
 package com.cavedream.core.render;
 
+import com.cavedream.core.appearance.PixelLookForge;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,7 +28,7 @@ class PaintedLookTest {
 
     @Test
     void boundsEnclosesBodyAndNullWhenAllBlack() {
-        PaintedLook l = new PaintedLook();
+        PaintedLook l = PixelLookForge.defaultLook();   // 锻造默认长相（有人形实体）
         int[] b = l.bounds();
         assertThat(b).isNotNull();
         assertThat(b[2]).isPositive();
@@ -42,7 +43,7 @@ class PaintedLookTest {
 
     @Test
     void fillRegionPaintsAllRegionCells() {
-        PaintedLook l = new PaintedLook();
+        PaintedLook l = PixelLookForge.defaultLook();
         l.fillRegion(PaintedLook.R_HAIR, 0xFF00FF00);
         byte[] r = l.regions();
         int expect = Palette.snap(0xFF00FF00);

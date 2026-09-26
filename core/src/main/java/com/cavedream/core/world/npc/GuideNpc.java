@@ -1,5 +1,8 @@
 package com.cavedream.core.world.npc;
 
+import com.cavedream.core.appearance.LookDice;
+import com.cavedream.core.appearance.LookSpec;
+import com.cavedream.core.appearance.PixelLookForge;
 import com.cavedream.core.render.PaintedLook;
 
 /**
@@ -13,11 +16,14 @@ public final class GuideNpc {
     public static final int CODEX_PRICE = 5;       // 世界准则法典售价（⚠ 临时调低便于测试，正式版应改回 50）
     public static final int TEMPLATE_ID = 1;       // 构梦者画板模板 id
 
+    /** 构梦者固定烘焙外观蓝图（构建期定、运行确定性锻造；固定 seed→每次同一张脸）。 */
+    private static final LookSpec GUIDE_SPEC = LookDice.roll(0x601DEA5L);
+
     private float x;
     private float y;
     private boolean present;                       // 是否已出现在世界中
     private boolean codexOwned;                    // 法典是否已被购得（一次性）
-    private PaintedLook look = new PaintedLook(TEMPLATE_ID);
+    private PaintedLook look = PixelLookForge.forge(GUIDE_SPEC);
 
     private float homeX = Float.NaN;           // 巡逻中心（世界像素）
     private float patrolHalf = 0f;             // 巡逻半径

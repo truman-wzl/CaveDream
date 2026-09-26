@@ -48,6 +48,11 @@ import com.cavedream.core.world.npc.GuideNpc;
 import com.cavedream.core.anim.BoneId;
 import com.cavedream.core.anim.Pose;
 import com.cavedream.core.render.SkeletalAvatar;
+import com.cavedream.core.appearance.LookSpec;
+import com.cavedream.core.appearance.PixelLookForge;
+import com.cavedream.core.appearance.weapon.WeaponDef;
+import com.cavedream.core.appearance.weapon.WeaponPart;
+import com.cavedream.core.render.WeaponCatalog;
 
 /**
  * L1 浅梦箱庭游玩界面（M2 垂直切片）：可走、可跳、可挖、可放。
@@ -88,6 +93,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private TextureRegion dreamerRegion;
     private Texture dreamerTex;                                             // 由捏脸上色生成的纹理
     private PaintedLook appearance = new PaintedLook();                     // 可涂色外观（玩家/NPC 通用）
+    private LookSpec spec;                                                   // 玩家外观蓝图（供存档复现；新游戏由骰子屏传入）
     private final GuideNpc guide = new GuideNpc();                          // 构梦者（商人 NPC）
     private Texture guideTex;                                               // 构梦者外观纹理
     private TextureRegion guideRegion;
@@ -119,7 +125,14 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
     private final Pose avatarPose = new Pose();
     private float avatarPhase;
     private float pvBob, pvTilt, pvW, pvH;
+    private float pvCarry = 45f;   // 静持斜角（度）：武器相对拳头方向的恒定持握角，对接点焊接用
     private int pvFacing = 1;
+    private boolean skeletalBody = true;   // 骨骼身体（软件蒙皮→SpriteBatch，与武器同通道保证可见）
+    private SkeletalAvatar guideAvatar;    // 构梦者骨骼（复用 DreamerRig + 软件蒙皮）
+    private final Pose guidePose = new Pose();
+    private float guidePhase;
+    private float guidePrevX = Float.NaN;
+    private boolean guideWalking;
     private BlockType holdBlock = BlockType.DIRT;
     private final Vector3 mouseWorld = new Vector3();
     private final float[] dust = new float[90 * 3];   // x, y, 相位
@@ -191,7 +204,7 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                       long seed, int spawnTileX, int spawnTileY, PaintedLook appearance) {
         this.game = game;
         this.playerClass = playerClass;
-        this.appearance = appearance != null ? appearance : new PaintedLook();
+        this.appearance = appearance != null ? appearance : PixelLookForge.defaultLook();
         this.stats = new PlayerStats(playerClass);
         recomputeServantCap();   // 通灵师上限 3+成长；开局 0 只（需召唤）
         this.world = world;
@@ -236,6 +249,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         guideTex = new Texture(lookPixmap(guide.look().colors));
         guideTex.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
         guideRegion = new TextureRegion(guideTex);
+        guideAvatar = new SkeletalAvatar();
+        guideAvatar.setAppearance(guide.look());
         blobRegion = new TextureRegion(textures.cornerBlob());
         blobWhiteRegion.setRegion(new TextureRegion(textures.blobWhite()));
         for (int i = 0; i < 256; i++) {
@@ -246,6 +261,11 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         lastLCx = spawnTileX;
         lastLCy = spawnTileY;
         rebuildTreeRegistry();   // 扫描世界登记已有树（世界树 + 玩家树）
+    }
+
+    /** 设定玩家外观蓝图（新游戏由骰子屏传入；供 toSave 持久化）。 */
+    public void setSpec(LookSpec s) {
+        this.spec = s;
     }
 
     @Override
@@ -362,13 +382,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         drawMobs();
         drawGuide();
         drawDrops();
-        batch.end();
         updatePlayerVisual();
-        if (avatar != null) {
-            avatar.draw(camera, player.x(), player.y() + pvBob, pvW, pvH, pvFacing, pvTilt);
+        if (skeletalBody && avatar != null) {
+            avatar.draw(batch, player.x(), player.y() + pvBob, pvW, pvH, pvFacing, pvTilt);
         }
-        batch.setProjectionMatrix(camera.combined);
-        batch.begin();
         drawPlayer();
         renderProjectiles();
         renderServants();
@@ -811,6 +828,15 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             return;
         }
         guide.wander(dt);
+        // 步态相位：按本帧是否水平位移判定行走（供骨骼摆动）
+        boolean gm = !Float.isNaN(guidePrevX) && Math.abs(guide.x() - guidePrevX) > 0.02f;
+        guidePrevX = guide.x();
+        guideWalking = gm;
+        if (gm) {
+            guidePhase += dt * 9f;
+        } else {
+            guidePhase = 0f;
+        }
         // 贴地：从脚下向下找第一格实心/平台
         int tx = (int) Math.floor((guide.x() + TILE * 0.65f) / TILE);
         int ty = (int) Math.floor((guide.y() + 2f) / TILE);
@@ -897,7 +923,12 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         batch.setColor(1, 1, 1, 1);
         float gw = TILE * 1.3f, gh = TILE * 2.6f;
-        if (guide.facing() < 0f) {   // 朝左→水平镜像（底模默认朝右）
+        int facing = guide.facing() < 0f ? -1 : 1;
+        if (skeletalBody && guideAvatar != null) {   // 骨骼蒙皮（与玩家同通道）
+            fillLocomotionPose(guidePose, guideWalking, guidePhase, -1f, Item.Kind.BLOCK);
+            guideAvatar.applyPose(guidePose);
+            guideAvatar.draw(batch, guide.x(), guide.y(), gw, gh, facing, 0f);
+        } else if (facing < 0) {   // 回退单图：朝左镜像
             batch.draw(guideRegion, guide.x() + gw, guide.y(), 0f, 0f, gw, gh, -1f, 1f, 0f);
         } else {
             batch.draw(guideRegion, guide.x(), guide.y(), gw, gh);
@@ -1228,7 +1259,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         int[] a = UiIcons.iconArgb(it);
         if (a != null) {
-            return PaintedLook.forItem(UiIcons.SIZE, UiIcons.SIZE, a);
+            int side = (int) Math.round(Math.sqrt(a.length));
+            return PaintedLook.forItem(side, side, a);
         }
         return PaintedLook.forItem(16, 16, BlockTextures.blockArgb(BlockType.WOOD));
     }
@@ -1251,6 +1283,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         guideTex = new Texture(lookPixmap(look.colors));
         guideTex.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
         guideRegion = new TextureRegion(guideTex);
+        if (guideAvatar != null) {
+            guideAvatar.setAppearance(look);
+        }
         logStory("以法典重塑了构梦者的样貌");
         toast = "构梦者样貌已重塑";
         toastT = 2f;
@@ -2148,8 +2183,8 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
             pvBob = (float) Math.sin(time * 4f) * 1.8f;
             pvTilt = pvFacing > 0 ? 80f : -80f;
         } else if (walking) {
-            pvBob = (float) Math.abs(Math.sin(walkPhase)) * 2.2f;
-            pvTilt = (float) Math.sin(walkPhase) * 3f;
+            pvBob = 0f;
+            pvTilt = 0f;   // 移动只摆四肢、身体不倾不颠（去“摇摇车”感）
         } else if (!player.isOnGround()) {
             pvBob = 0f;
             pvTilt = pvFacing > 0 ? 6f : -6f;
@@ -2162,30 +2197,69 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         } else {
             avatarPhase = 0f;
         }
-        buildAvatarPose(walking);
+        Item.Kind heldKind = inventory.selectedItem() == null ? Item.Kind.TOOL : inventory.selectedItem().kind();
+        // 持握角=−常驻前抬角：拳链已把拳头转了 ready，反推回去才使静立时剑近似竖直（且随之后的摆同幅前后倒）
+        pvCarry = -readyArmFor(heldKind);
+        buildAvatarPose(walking, swing.isActive() ? swing.progress() : -1f, heldKind);
         if (avatar != null) {
             avatar.applyPose(avatarPose);
         }
     }
 
-    /** 程序化姿态：待机呼吸 + 走路四肢摆动（前臂/双腿反相）。一次性动作后续由 Animator/overlay 接管。 */
-    private void buildAvatarPose(boolean walking) {
-        avatarPose.reset();
+    /** 程序化姿态（玩家）：委托通用步态填充；swingP≥0 叠加挥臂；held 非 BLOCK 时持剑常驻姿态。 */
+    private void buildAvatarPose(boolean walking, float swingP, Item.Kind held) {
+        fillLocomotionPose(avatarPose, walking, avatarPhase, swingP, held);
+    }
+
+    /** 通用程序化步态：待机＝呼吸；走路＝四肢活塞摆（身体不倾）；swingP≥0 叠加挥砍；持械时前臂常驻“前抬”姿态。 */
+    private void fillLocomotionPose(Pose out, boolean walking, float phase, float swingP, Item.Kind held) {
+        out.reset();
         float breath = (float) Math.sin(time * 2f);
-        avatarPose.setBone(BoneId.SPINE, breath * 1.2f, 0, 0, 1, 1);
-        avatarPose.setBone(BoneId.HEAD, -breath * 1.6f, 0, 0, 1, 1);
+        out.setBone(BoneId.SPINE, 0, 0, breath * 0.9f, 1, 1);   // 刚性平移呼吸
+        out.setBone(BoneId.HEAD, 0, 0, breath * 0.6f, 1, 1);
+        float swing;                                            // 前臂摆量（与后臂反相）
         if (walking) {
-            float sw = (float) Math.sin(avatarPhase);
-            float amp = 26f;
-            avatarPose.setBone(BoneId.THIGH_F, sw * amp, 0, 0, 1, 1);
-            avatarPose.setBone(BoneId.THIGH_B, -sw * amp, 0, 0, 1, 1);
-            avatarPose.setBone(BoneId.SHIN_F, Math.max(0f, -sw) * amp * 0.7f, 0, 0, 1, 1);
-            avatarPose.setBone(BoneId.SHIN_B, Math.max(0f, sw) * amp * 0.7f, 0, 0, 1, 1);
-            avatarPose.setBone(BoneId.ARM_FB, -sw * amp * 0.6f, 0, 0, 1, 1);
-            avatarPose.setBone(BoneId.ARM_UB, sw * amp * 0.6f, 0, 0, 1, 1);
+            float sw = (float) Math.sin(phase);
+            float amp = 20f;   // 活塞式：绕胯旋转（腿始终连着身体），前后腿反相→人字张角而非 X 交叉
+            out.setBone(BoneId.THIGH_F, sw * amp, 0, 0, 1, 1);
+            out.setBone(BoneId.THIGH_B, -sw * amp, 0, 0, 1, 1);
+            out.setBone(BoneId.SHIN_F, Math.max(0f, -sw) * amp * 0.8f, 0, 0, 1, 1);
+            out.setBone(BoneId.SHIN_B, Math.max(0f, sw) * amp * 0.8f, 0, 0, 1, 1);
+            out.setBone(BoneId.ARM_FB, -sw * 26f, 0, 0, 1, 1);   // 后臂大幅反相摆
+            swing = sw * 26f;
         } else {
-            avatarPose.setBone(BoneId.ARM_FB, -4f + breath * 2f, 0, 0, 1, 1);
+            out.setBone(BoneId.ARM_FB, -3f + breath * 1.5f, 0, 0, 1, 1);
+            swing = 3f - breath * 1.5f;
         }
+        float ready = readyArmFor(held);
+        // 持械：肩常驻前抬 ready；走路/待机整个 ARM_UB 链刚性前后扫（肘不参转→L 形不拆）
+        // 拳头会随之自转 → 武器角=carry+拳链角也跟着倒（carry=−ready 使静立恰好竖直）
+        out.setBone(BoneId.ARM_UB, -ready + swing, 0, 0, 1, 1);
+        if (swingP >= 0f) {
+            applySwingArm(out, swingP, ready);   // 挥砍：整条可见臂跟武器走同一条弧
+        }
+    }
+
+    /** 持臂“前抬”角：肩抬这么多把拳头送到身前（竖直拿剑才不会盖脸、也不飘在身侧）。 */
+    private static float readyArmFor(Item.Kind held) {
+        if (held == Item.Kind.WEAPON) {
+            return 40f;
+        }
+        return held == Item.Kind.BLOCK ? 0f : 24f;
+    }
+
+    /**
+     * 挥砍持臂（可见 ARM_UB 链）：拳链累计角 = carry − 武器弧，与绘制端焊接公式
+     * rot = tilt + facing·(carry + 拳链角) 严格互逆 → 剑沿 Swing 弧（头顶 30°→身前下 −150°）扫。
+     * 在常驻前抬基础上额外转的量按肩 55% / 肘 20% / 腕 25% 分摊（腕那部分=拳头自转，读作“转腕砍”）。
+     */
+    private void applySwingArm(Pose out, float p, float ready) {
+        float e = p < 0.3f ? 0f : 1f - (1f - (p - 0.3f) / 0.7f) * (1f - (p - 0.3f) / 0.7f);
+        float weaponAng = 30f - 180f * e;              // Swing 弧：头顶 30°→身前下 -150°
+        float extra = (pvCarry - weaponAng) + ready;   // 总需角 −ready−weaponAng，减去常驻 −ready 后的增量
+        out.setBone(BoneId.ARM_UB, -ready + extra * 0.55f, 0, 0, 1, 1);
+        out.setBone(BoneId.FORE_UB, extra * 0.20f, 0, 0, 1, 1);
+        out.setBone(BoneId.HAND_UB, extra * 0.25f, 0, 0, 1, 1);
     }
 
     private void drawPlayer() {
@@ -2215,20 +2289,52 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         Item.Kind hk = held == null ? Item.Kind.TOOL : held.kind();
         float ps, rest, gy, gripF;
         if (hk == Item.Kind.WEAPON) {
-            ps = h * 0.92f; rest = 22f; gy = player.centerY() + h * 0.18f; gripF = 0.5f;
+            ps = h * 0.92f; rest = -40f; gy = player.centerY() + h * 0.18f; gripF = 0.5f;   // 战士：竖直拿剑（与骨路由 pvCarry 对齐）
         } else if (hk == Item.Kind.BLOCK) {
             ps = h * 0.44f; rest = -12f; gy = player.centerY() + h * 0.02f; gripF = 0.42f;   // 小立方靠胸前
         } else {
-            ps = h * 0.62f; rest = 26f; gy = player.centerY() + h * 0.12f; gripF = 0.5f;
+            ps = h * 0.62f; rest = -24f; gy = player.centerY() + h * 0.12f; gripF = 0.5f;   // 工具同骨路持掘角
         }
         TextureRegion hand = held != null ? itemSprite(held) : pickaxeRegion;
         float sway = walking ? (float) Math.sin(walkPhase * 2f) : 0f;        // 持手随步轻晃
         gy += bob + sway * 0.8f;
-        float rot = hk == Item.Kind.BLOCK
-                ? rest + sway * 3f                                            // 方块只随步微晃、不挥砍
-                : swing.angle(rest, facing);                                 // 武器/工具：静止握持角 + 头顶→身前下挥砍弧
-        float gx = player.centerX() + facing * w * gripF;
-        batch.draw(hand, gx - ps / 2f, gy, ps / 2f, 0f, ps, ps, facing, 1f, rot);
+        boolean weld = skeletalBody && avatar != null && hk != Item.Kind.BLOCK;
+        // 对接点焊接：角色侧=拳头骨枢轴，武器侧=grip socket；把 socket 直接当作 batch 的旋转/缩放原点——
+        // 原点是旋转与镜像的不动点，所以握点一定落在拳头上（彻底消除偏移换算出错的可能）
+        float[] hp = weld ? avatar.boneWorld(BoneId.HAND_UB, player.x(), player.y() + pvBob,
+                pvW, pvH, pvFacing, pvTilt) : null;
+        float rot;
+        float anchorX, anchorY, orgX, orgY;
+        if (weld) {
+            WeaponDef wd = held != null ? WeaponCatalog.defFor(held) : WeaponCatalog.defForId(100);
+            float sx = wd.canvasW * 0.5f, sy = wd.canvasH * 0.56f;   // 缺省握点：柄区
+            WeaponPart grip = wd.socketPart("hand");
+            if (grip != null) {
+                sx = grip.socketX;
+                sy = grip.socketY;
+            }
+            // hp[2]=拳头链视觉角（未镜像、CCW 正）；武器角=倾角+持握角+链角，再按朝向镜像
+            rot = pvTilt + facing * (pvCarry + hp[2]);
+            orgX = sx / wd.canvasW * ps;                       // socket 在 sprite 局部的位置
+            orgY = (wd.canvasH - sy) / wd.canvasH * ps;        // canvas y 向下 → 局部 y 向上
+            anchorX = hp[0];
+            anchorY = hp[1];
+        } else {
+            rot = hk == Item.Kind.BLOCK ? -12f + sway * 3f : swing.angle(rest, facing);
+            orgX = ps / 2f;
+            orgY = 0f;                                          // 旧行为：以底边中点为销
+            anchorX = player.centerX() + facing * w * gripF;
+            anchorY = gy;
+        }
+        batch.draw(hand, anchorX - orgX, anchorY - orgY, orgX, orgY, ps, ps, facing, 1f, rot);
+        if (!skeletalBody) {   // 回退：单图身体（受击闪白）
+            if (stats.isInvulnerable()) {
+                batch.setColor(1f, 0.55f, 0.55f, 1f);
+            } else {
+                batch.setColor(1, 1, 1, 1);
+            }
+            batch.draw(dreamerRegion, player.x(), player.y() + bob, w / 2, h / 2, w, h, facing, 1, tilt);
+        }
         batch.setColor(1, 1, 1, 1);
     }
 
@@ -3258,6 +3364,10 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         s.guidePresent = guide.present();
         s.faceTemplateId = appearance.templateId;
         s.faceColors = appearance.colors.clone();
+        if (spec != null) {
+            s.faceSpecParams = spec.toParams();
+            s.faceSpecVersion = 1;
+        }
         s.storyLog = storyLog.toArray(new String[0]);
         int cn = chests.size();
         int[] cTile = new int[cn];
@@ -3456,9 +3566,13 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
                 }
             }
         }
-        if (s.faceColors != null && s.faceColors.length == PaintedLook.W * PaintedLook.H) {
+        if (s.faceSpecParams != null && s.faceSpecParams.length >= 18) {
+            spec = LookSpec.fromParams(s.faceSpecParams);          // 新档：按蓝图重锻造（可复现）
+            appearance = PixelLookForge.forge(spec);
+            buildDreamer();
+        } else if (s.faceColors != null && s.faceColors.length == PaintedLook.W * PaintedLook.H) {
             appearance = new PaintedLook(s.faceTemplateId, s.faceColors);
-            buildDreamer();                     // 读档按存档的上色重建外观纹理
+            buildDreamer();                     // 旧档：按存档像素重建外观纹理
         }
         if (s.furnaceAnchor != null) {
             int n = s.furnaceAnchor.length;
@@ -3577,6 +3691,9 @@ public class PlayScreen extends ScreenAdapter implements Disposable {
         }
         if (avatar != null) {
             avatar.dispose();
+        }
+        if (guideAvatar != null) {
+            guideAvatar.dispose();
         }
     }
 }

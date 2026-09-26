@@ -6,6 +6,7 @@ import com.badlogic.gdx.graphics.Texture.TextureFilter;
 import com.badlogic.gdx.utils.Disposable;
 import com.cavedream.core.item.Item;
 import com.cavedream.core.player.PlayerClass;
+import com.cavedream.core.appearance.weapon.WeaponDef;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -71,36 +72,29 @@ public final class UiIcons implements Disposable {
         return t;
     }
 
-    /** 物品图标（武器/工具）的 CPU 端 ARGB（SIZE×SIZE），供法典画板按自身贴图起始；方块/未知返回 null。 */
+    /** 物品图标（武器/工具）的 CPU 端 ARGB（取自身贴图尺寸），供法典画板按起始；方块/未知返回 null。 */
     public static int[] iconArgb(Item it) {
         Pixmap pm = iconPixmap(it);
         if (pm == null) {
             return null;
         }
-        int[] a = new int[SIZE * SIZE];
-        for (int y = 0; y < SIZE; y++) {
-            for (int x = 0; x < SIZE; x++) {
+        int w = pm.getWidth(), h = pm.getHeight();
+        int[] a = new int[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
                 int p = pm.getPixel(x, y);          // RGBA8888：r<<24|g<<16|b<<8|a
                 int r = (p >> 24) & 0xFF, g = (p >> 16) & 0xFF, b = (p >> 8) & 0xFF, al = p & 0xFF;
-                a[y * SIZE + x] = (al << 24) | (r << 16) | (g << 8) | b;
+                a[y * w + x] = (al << 24) | (r << 16) | (g << 8) | b;
             }
         }
         pm.dispose();
         return a;
     }
 
-    private static Pixmap iconPixmap(Item it) {
-        int id = it.id();
-        if (id >= 100 && id <= 105) {
-            return pickaxePixmap();
-        }
-        if (id >= 110 && id <= 115) {
-            return axePixmap();
-        }
-        if (id >= 200 && id <= 204) {
-            return weaponPixmap(PlayerClass.values()[id - 200]);
-        }
-        return null;
+    /** 物品图标 Pixmap（锻造合成，40×40）；方块/未知返回 null。 */
+    public static Pixmap iconPixmap(Item it) {
+        WeaponDef def = WeaponCatalog.defFor(it);
+        return def == null ? null : WeaponRenderer.composedPixmap(def);
     }
 
     private static Pixmap canvas() {
@@ -118,7 +112,7 @@ public final class UiIcons implements Disposable {
     }
 
     private static Texture buildWeapon(PlayerClass c) {
-        return toTexture(weaponPixmap(c));
+        return toTexture(WeaponRenderer.composedPixmap(WeaponCatalog.defForId(200 + c.ordinal())));
     }
 
     private static Pixmap weaponPixmap(PlayerClass c) {
@@ -175,7 +169,7 @@ public final class UiIcons implements Disposable {
     }
 
     private static Texture buildPickaxe() {
-        return toTexture(pickaxePixmap());
+        return toTexture(WeaponRenderer.composedPixmap(WeaponCatalog.defForId(100)));
     }
 
     private static Pixmap pickaxePixmap() {
@@ -194,7 +188,7 @@ public final class UiIcons implements Disposable {
     }
 
     private static Texture buildAxe() {
-        return toTexture(axePixmap());
+        return toTexture(WeaponRenderer.composedPixmap(WeaponCatalog.defForId(110)));
     }
 
     private static Pixmap axePixmap() {
